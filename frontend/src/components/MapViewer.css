@@ -1,0 +1,60 @@
+.map-viewer-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.map-viewer-map {
+  min-height: 100%;
+}
+
+.map-viewer-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #666;
+  text-align: center;
+  padding: 20px;
+}
+
+.map-viewer-error p {
+  margin: 8px 0;
+}
+
+.map-viewer-warning {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  max-width: 320px;
+  background: #fff4e5;
+  color: #7a4b00;
+  border: 1px solid #ffd199;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  z-index: 5;
+}
+
+.map-fit-button {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 6;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid #eadfce;
+  background: rgba(252, 250, 246, 0.95);
+  color: #24170f;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(46, 34, 23, 0.16);
+}
+
+.map-fit-button:hover {
+  background: #f6ede0;
+  border-color: #d9c3a1;
+}

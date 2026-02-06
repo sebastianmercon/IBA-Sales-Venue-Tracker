@@ -1,0 +1,141 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+.app {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: #f7f4ef;
+}
+
+.app-header {
+  background: rgba(252, 250, 246, 0.95);
+  padding: 16px 24px;
+  border-bottom: 1px solid #eadfce;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 10px 26px rgba(46, 34, 23, 0.12);
+  z-index: 100;
+  backdrop-filter: blur(8px);
+}
+
+.app-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #24170f;
+  margin: 0;
+}
+
+.app-status {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 14px;
+}
+
+.status-loading {
+  color: #6b5a4a;
+}
+
+.status-error {
+  color: #b45309;
+}
+
+.status-sync {
+  color: #6b5a4a;
+}
+
+.app-content {
+  flex: 1;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+}
+
+.app-map-container {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* Venue list for development/testing */
+.app-venue-list {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  background: rgba(252, 250, 246, 0.96);
+  border: 1px solid #eadfce;
+  border-radius: 12px;
+  padding: 14px;
+  max-width: 320px;
+  max-height: 420px;
+  overflow-y: auto;
+  box-shadow: 0 14px 30px rgba(46, 34, 23, 0.14);
+  z-index: 999;
+  font-size: 12px;
+}
+
+.app-venue-list summary {
+  cursor: pointer;
+  font-weight: 700;
+  margin-bottom: 8px;
+  padding: 4px;
+  color: #24170f;
+}
+
+.venue-search-input {
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border: 1px solid #e6d8c2;
+  border-radius: 8px;
+  font-size: 12px;
+  background: #fffaf2;
+  color: #24170f;
+}
+
+.venue-search-input:focus {
+  outline: none;
+  border-color: #c9a227;
+  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.18);
+}
+
+.app-venue-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.app-venue-list li {
+  margin: 4px 0;
+}
+
+.venue-list-item {
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+  background: #fffdf9;
+  border: 1px solid #eadfce;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+  color: #24170f;
+}
+
+.venue-list-item:hover {
+  background-color: #f7efe3;
+  border-color: #d9c3a1;
+}
+
+.venue-list-item.visited {
+  border-left: 4px solid #1f8a5f;
+}
+
+.venue-list-item.not-visited {
+  border-left: 4px solid #b45309;
+}
