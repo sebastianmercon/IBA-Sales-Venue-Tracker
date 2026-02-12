@@ -70,7 +70,7 @@ function getColumnMappings() {
     BEST_DAYS: parseColumnIndex('COLUMN_BEST_DAYS_INDEX', -1),
     LATITUDE: parseColumnIndex('COLUMN_LATITUDE_INDEX', -1),
     LONGITUDE: parseColumnIndex('COLUMN_LONGITUDE_INDEX', -1),
-    CLUSTER_ID: parseColumnIndex('COLUMN_CLUSTER_ID_INDEX', -1),
+    CLUSTER_ID: parseColumnIndex('COLUMN_CLUSTER_ID_INDEX', 18), // Column S
     ASSIGNED_REP: parseColumnIndex('COLUMN_ASSIGNED_REP_INDEX', -1),
     VISIT_TIMES_NAME: parseColumnIndex('VISIT_TIMES_NAME_INDEX', 0),
     VISIT_TIMES_BEST_TIME: parseColumnIndex('VISIT_TIMES_BEST_TIME_INDEX', 1),

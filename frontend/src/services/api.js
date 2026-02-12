@@ -8,7 +8,9 @@
 import axios from 'axios';
 
 // Cloud Functions base URL - set via environment variable or default
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:9090';
+// Default uses the current host so LAN access "just works" on phones.
+const fallbackHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `http://${fallbackHost}:9090`;
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -72,6 +74,19 @@ export async function triggerSync() {
     return response.data;
   } catch (error) {
     console.error('Error triggering sync:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get cluster polygons from My Maps
+ */
+export async function getClusterPolygons() {
+  try {
+    const response = await api.get('/api/clusters');
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching cluster polygons:', error);
     throw error;
   }
 }

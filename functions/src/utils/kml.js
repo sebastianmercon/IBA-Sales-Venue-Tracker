@@ -19,6 +19,119 @@ const parserOptions = {
 const parser = new XMLParser(parserOptions);
 const builder = new XMLBuilder(parserOptions);
 
+function normalizeArray(value) {
+  if (!value) {
+    return [];
+  }
+  return Array.isArray(value) ? value : [value];
+}
+
+function readText(value) {
+  return value?.['#text'] || value || '';
+}
+
+function parseKmlColor(value) {
+  if (!value) {
+    return null;
+  }
+  const raw = String(value).replace('#', '').trim();
+  if (raw.length !== 8 && raw.length !== 6) {
+    return null;
+  }
+  let aa = 'ff';
+  let rr = '00';
+  let gg = '00';
+  let bb = '00';
+  if (raw.length === 8) {
+    aa = raw.slice(0, 2);
+    bb = raw.slice(2, 4);
+    gg = raw.slice(4, 6);
+    rr = raw.slice(6, 8);
+  } else {
+    rr = raw.slice(0, 2);
+    gg = raw.slice(2, 4);
+    bb = raw.slice(4, 6);
+  }
+  return {
+    color: `#${rr}${gg}${bb}`,
+    opacity: Number.parseInt(aa, 16) / 255,
+  };
+}
+
+function extractCoordinates(coordinatesText) {
+  const text = String(coordinatesText || '').trim();
+  if (!text) {
+    return [];
+  }
+  return text
+    .split(/\s+/)
+    .map((pair) => {
+      const [lng, lat] = pair.split(',').map((value) => Number.parseFloat(value));
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return null;
+      }
+      return { lat, lng };
+    })
+    .filter(Boolean);
+}
+
+function resolveStyle(document, styleUrl) {
+  const styleId = String(styleUrl || '').replace('#', '');
+  if (!styleId) {
+    return null;
+  }
+  const styles = normalizeArray(document.Style);
+  const styleMaps = normalizeArray(document.StyleMap);
+  let resolvedId = styleId;
+
+  const styleMap = styleMaps.find((entry) => entry['@_id'] === styleId);
+  if (styleMap) {
+    const pairs = normalizeArray(styleMap.Pair);
+    const normalPair = pairs.find((pair) => readText(pair.key) === 'normal') || pairs[0];
+    const mapStyleUrl = readText(normalPair?.styleUrl);
+    if (mapStyleUrl) {
+      resolvedId = mapStyleUrl.replace('#', '');
+    }
+  }
+
+  const style = styles.find((entry) => entry['@_id'] === resolvedId);
+  if (!style) {
+    return null;
+  }
+
+  const lineStyle = style.LineStyle || {};
+  const polyStyle = style.PolyStyle || {};
+  const stroke = parseKmlColor(readText(lineStyle.color));
+  const fill = parseKmlColor(readText(polyStyle.color));
+
+  return {
+    strokeColor: stroke?.color || null,
+    strokeOpacity: stroke?.opacity ?? null,
+    strokeWeight: Number.parseFloat(readText(lineStyle.width)) || null,
+    fillColor: fill?.color || null,
+    fillOpacity: fill?.opacity ?? null,
+  };
+}
+
+function extractPolygonsFromPlacemark(placemark) {
+  const polygons = [];
+  const direct = normalizeArray(placemark.Polygon);
+  const multi = normalizeArray(placemark.MultiGeometry?.Polygon);
+  const allPolygons = [...direct, ...multi];
+
+  for (const polygon of allPolygons) {
+    const ring = polygon?.outerBoundaryIs?.LinearRing?.coordinates;
+    const coords = extractCoordinates(readText(ring));
+    if (coords.length === 0) {
+      continue;
+    }
+    polygons.push({
+      paths: [coords],
+    });
+  }
+  return polygons;
+}
+
 /**
  * Parse KML content and extract placemarks
  * Returns array of { id, name, coordinates, styleUrl }
@@ -30,15 +143,12 @@ function parseKML(kmlContent) {
     
     // KML structure: kml > Document > Placemark[]
     const document = json.kml?.Document || json.kml?.Folder || {};
-    const placemarkArray = Array.isArray(document.Placemark) 
-      ? document.Placemark 
-      : (document.Placemark ? [document.Placemark] : []);
+    const placemarkArray = normalizeArray(document.Placemark);
 
     for (const placemark of placemarkArray) {
-      const name = placemark.name?.['#text'] || placemark.name || '';
-      const coordinates = placemark.Point?.coordinates?.['#text'] || 
-                         placemark.Point?.coordinates || '';
-      const styleUrl = placemark.styleUrl?.['#text'] || placemark.styleUrl || '';
+      const name = readText(placemark.name);
+      const coordinates = readText(placemark.Point?.coordinates);
+      const styleUrl = readText(placemark.styleUrl);
       
       // Extract ID from styleUrl or use name as identifier
       const id = styleUrl.replace('#', '') || name.toLowerCase().replace(/\s+/g, '-');
@@ -56,6 +166,42 @@ function parseKML(kmlContent) {
   } catch (error) {
     console.error('Error parsing KML:', error.message);
     throw new Error('Failed to parse KML file');
+  }
+}
+
+/**
+ * Parse KML content and extract polygon overlays
+ * Returns array of { name, paths, strokeColor, strokeOpacity, strokeWeight, fillColor, fillOpacity }
+ */
+function parseKMLPolygons(kmlContent) {
+  try {
+    const json = parser.parse(kmlContent);
+    const document = json.kml?.Document || json.kml?.Folder || {};
+    const placemarkArray = normalizeArray(document.Placemark);
+    const polygons = [];
+
+    for (const placemark of placemarkArray) {
+      const name = readText(placemark.name);
+      const styleUrl = readText(placemark.styleUrl);
+      const style = resolveStyle(document, styleUrl) || {};
+      const rings = extractPolygonsFromPlacemark(placemark);
+      rings.forEach((ring) => {
+        polygons.push({
+          name,
+          paths: ring.paths,
+          strokeColor: style.strokeColor,
+          strokeOpacity: style.strokeOpacity,
+          strokeWeight: style.strokeWeight,
+          fillColor: style.fillColor,
+          fillOpacity: style.fillOpacity,
+        });
+      });
+    }
+
+    return { polygons, document };
+  } catch (error) {
+    console.error('Error parsing KML polygons:', error.message);
+    throw new Error('Failed to parse KML polygons');
   }
 }
 
@@ -277,6 +423,7 @@ function syncVenuesToKML(kmlJson, venues) {
 
 module.exports = {
   parseKML,
+  parseKMLPolygons,
   updatePlacemarkColor,
   generateKML,
   syncVenuesToKML,

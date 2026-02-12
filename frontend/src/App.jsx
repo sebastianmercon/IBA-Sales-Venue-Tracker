@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import MapViewer from './components/MapViewer';
 import VenuePanel from './components/VenuePanel';
 import PollingService from './services/polling';
-import { getVenues } from './services/api';
+import { getClusterPolygons, getVenues } from './services/api';
 import './App.css';
 
 /**
@@ -18,8 +18,34 @@ function App() {
   const [error, setError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
   const [venueQuery, setVenueQuery] = useState('');
+  const [showOnlyUnvisited, setShowOnlyUnvisited] = useState(false);
+  const [priorityFilter, setPriorityFilter] = useState('all');
+  const [showStartMenu, setShowStartMenu] = useState(
+    () => localStorage.getItem('svt_hide_start_menu') !== 'true'
+  );
+  const [clusterPolygons, setClusterPolygons] = useState([]);
   const pollingServiceRef = React.useRef(null);
   const normalizeName = useCallback((value) => String(value || '').trim().toLowerCase(), []);
+
+  useEffect(() => {
+    localStorage.setItem('svt_hide_start_menu', showStartMenu ? 'false' : 'true');
+  }, [showStartMenu]);
+
+  useEffect(() => {
+    let canceled = false;
+    getClusterPolygons()
+      .then((data) => {
+        if (!canceled) {
+          setClusterPolygons(data.polygons || []);
+        }
+      })
+      .catch((error) => {
+        console.warn('Failed to load cluster polygons:', error?.message || error);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, []);
 
   // Initialize polling service
   useEffect(() => {
@@ -119,32 +145,170 @@ function App() {
   };
 
   const normalizedQuery = venueQuery.trim().toLowerCase();
+  const visibleVenues = showOnlyUnvisited
+    ? venues.filter((venue) => !venue.visited)
+    : venues;
+  const getPriorityLevel = (tagValue) => {
+    const tag = String(tagValue || '').toLowerCase().trim();
+    if (!tag) {
+      return null;
+    }
+    if (/\b1\b/.test(tag) || tag.includes('one')) {
+      return 1;
+    }
+    if (/\b2\b/.test(tag) || tag.includes('two')) {
+      return 2;
+    }
+    if (/\b3\b/.test(tag) || tag.includes('three')) {
+      return 3;
+    }
+    return null;
+  };
+
+  const priorityFilteredVenues = visibleVenues.filter((venue) => {
+    const level = getPriorityLevel(venue.priorityTag);
+    if (priorityFilter === 'all') {
+      return true;
+    }
+    if (!level) {
+      return false;
+    }
+    if (priorityFilter === 'priority12') {
+      return level === 1 || level === 2;
+    }
+    if (priorityFilter === 'priority3') {
+      return level === 3;
+    }
+    return true;
+  });
+
   const filteredVenues = normalizedQuery
-    ? venues.filter((venue) =>
+    ? priorityFilteredVenues.filter((venue) =>
         venue.name.toLowerCase().includes(normalizedQuery)
       )
-    : venues;
+    : priorityFilteredVenues;
+  const visitedCount = venues.filter((venue) => venue.visited).length;
+  const remainingCount = Math.max(venues.length - visitedCount, 0);
 
   return (
     <div className="app">
+      {showStartMenu && (
+        <div className="start-menu-backdrop">
+          <div className="start-menu-card">
+            <div className="start-menu-header">
+              <div>
+                <p className="start-menu-eyebrow">SalesVenueTracker</p>
+                <h2 className="start-menu-title">Welcome back</h2>
+                <p className="start-menu-subtitle">
+                  Track visits, update statuses, and keep the team aligned with a clean view of venues.
+                </p>
+              </div>
+              <button
+                className="start-menu-close"
+                type="button"
+                onClick={() => setShowStartMenu(false)}
+                aria-label="Close start menu"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="start-menu-stats">
+              <div>
+                <p className="start-menu-stat-label">Total venues</p>
+                <p className="start-menu-stat-value">{venues.length}</p>
+              </div>
+              <div>
+                <p className="start-menu-stat-label">Visited</p>
+                <p className="start-menu-stat-value">{visitedCount}</p>
+              </div>
+              <div>
+                <p className="start-menu-stat-label">Remaining</p>
+                <p className="start-menu-stat-value">{remainingCount}</p>
+              </div>
+            </div>
+            {lastSync && (
+              <p className="start-menu-sync">
+                Last sync: {new Date(lastSync).toLocaleTimeString()}
+              </p>
+            )}
+
+            <div className="start-menu-actions">
+              <button
+                className="start-menu-primary"
+                type="button"
+                onClick={() => setShowStartMenu(false)}
+              >
+                Enter dashboard
+              </button>
+              <button
+                className="start-menu-secondary"
+                type="button"
+                onClick={loadVenues}
+              >
+                Refresh venues
+              </button>
+            </div>
+
+            <div className="start-menu-help">
+              <p className="start-menu-help-title">Quick tips</p>
+              <ul>
+                <li>Use the search box to jump to a venue fast.</li>
+                <li>Tap a marker or pick a venue to update visited status.</li>
+                <li>The map clusters markers automatically for smoother performance.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="app-header">
         <h1 className="app-title">IBÁ Sales Venue Tracker</h1>
         <div className="app-status">
           {loading && <span className="status-loading">Loading...</span>}
           {error && <span className="status-error">{error}</span>}
-          {lastSync && !loading && (
-            <span className="status-sync">
-              Last sync: {new Date(lastSync).toLocaleTimeString()}
-            </span>
-          )}
+          <button
+            className={`app-filter-button ${showOnlyUnvisited ? 'active' : ''}`}
+            type="button"
+            onClick={() => setShowOnlyUnvisited((prev) => !prev)}
+          >
+            Show only unvisited
+          </button>
+          <button
+            className={`app-filter-button ${priorityFilter === 'priority12' ? 'active' : ''}`}
+            type="button"
+            onClick={() =>
+              setPriorityFilter((prev) => (prev === 'priority12' ? 'all' : 'priority12'))
+            }
+          >
+            Priority 1-2
+          </button>
+          <button
+            className={`app-filter-button ${priorityFilter === 'priority3' ? 'active' : ''}`}
+            type="button"
+            onClick={() =>
+              setPriorityFilter((prev) => (prev === 'priority3' ? 'all' : 'priority3'))
+            }
+          >
+            Priority 3
+          </button>
+          <button
+            className="app-menu-button"
+            type="button"
+            onClick={() => setShowStartMenu(true)}
+          >
+            Menu
+          </button>
         </div>
       </div>
 
       <div className="app-content">
         <div className="app-map-container">
           <MapViewer
-            venues={venues}
+            venues={priorityFilteredVenues}
             onVenueClick={handlePlacemarkClick}
+            selectedVenue={selectedVenue}
+            clusters={clusterPolygons}
           />
         </div>
 

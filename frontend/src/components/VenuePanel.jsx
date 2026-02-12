@@ -12,6 +12,18 @@ function VenuePanel({ venue, onClose, onUpdate }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const clusterDisplay = (() => {
+    const raw = String(venue?.clusterId || '').trim();
+    if (!raw) {
+      return 'N/A';
+    }
+    const lowered = raw.toLowerCase();
+    if (lowered.startsWith('cluster')) {
+      return raw;
+    }
+    return `Cluster ${raw}`;
+  })();
+
   // Update local state when venue changes
   React.useEffect(() => {
     if (venue) {
@@ -141,8 +153,8 @@ function VenuePanel({ venue, onClose, onUpdate }) {
         )}
 
         <div className="venue-panel-section">
-          <label className="venue-panel-label">Cluster ID</label>
-          <div className="venue-panel-value">{venue.clusterId || 'N/A'}</div>
+          <label className="venue-panel-label">Cluster Number</label>
+          <div className="venue-panel-value">{clusterDisplay}</div>
         </div>
 
         {venue.assignedRep && (

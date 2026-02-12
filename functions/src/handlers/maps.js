@@ -8,9 +8,10 @@
  * Updates may be delayed - system designed for eventual consistency
  */
 
+const https = require('https');
 const { google } = require('googleapis');
 const { XMLParser } = require('fast-xml-parser');
-const { parseKML, generateKML, syncVenuesToKML } = require('../utils/kml');
+const { parseKML, parseKMLPolygons, generateKML, syncVenuesToKML } = require('../utils/kml');
 
 /**
  * Download My Maps KML file from Google Drive
@@ -20,7 +21,7 @@ async function downloadMyMapsKML(auth, mapsFileId) {
   const drive = google.drive({ version: 'v3', auth });
   
   try {
-    // Download the file
+    // Download the file (works for binary files)
     const response = await drive.files.get(
       { fileId: mapsFileId, alt: 'media' },
       { responseType: 'text' }
@@ -28,6 +29,59 @@ async function downloadMyMapsKML(auth, mapsFileId) {
 
     return response.data;
   } catch (error) {
+    const reason =
+      error?.errors?.[0]?.reason ||
+      error?.response?.data?.error?.errors?.[0]?.reason ||
+      '';
+    const isNotDownloadable =
+      reason === 'fileNotDownloadable' ||
+      String(error?.message || '').includes('fileNotDownloadable');
+
+    // Fallback for Google Docs editors files (e.g., My Maps)
+    if (isNotDownloadable) {
+      try {
+        const exportResponse = await drive.files.export(
+          { fileId: mapsFileId, mimeType: 'application/vnd.google-earth.kml+xml' },
+          { responseType: 'text' }
+        );
+        return exportResponse.data;
+      } catch (exportError) {
+        const exportReason =
+          exportError?.errors?.[0]?.reason ||
+          exportError?.response?.data?.error?.errors?.[0]?.reason ||
+          '';
+        if (exportReason === 'fileNotExportable') {
+          const tokenResponse = await auth.getAccessToken();
+          const accessToken = typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token;
+          if (!accessToken) {
+            throw new Error('Failed to export My Maps file: missing access token');
+          }
+          const kmlUrl = `https://www.google.com/maps/d/kml?mid=${mapsFileId}&forcekml=1`;
+          return await new Promise((resolve, reject) => {
+            const request = https.get(
+              kmlUrl,
+              { headers: { Authorization: `Bearer ${accessToken}` } },
+              (res) => {
+                let data = '';
+                res.on('data', (chunk) => {
+                  data += chunk;
+                });
+                res.on('end', () => {
+                  if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                    resolve(data);
+                    return;
+                  }
+                  reject(new Error(`HTTP ${res.statusCode}: ${data}`));
+                });
+              }
+            );
+            request.on('error', reject);
+          });
+        }
+        console.error('Error exporting My Maps KML:', exportError.message);
+        throw new Error(`Failed to export My Maps file: ${exportError.message}`);
+      }
+    }
     console.error('Error downloading My Maps KML:', error.message);
     throw new Error(`Failed to download My Maps file: ${error.message}`);
   }
@@ -68,6 +122,20 @@ async function readMyMapsPlacemarks(auth, mapsFileId) {
     return placemarks;
   } catch (error) {
     console.error('Error reading My Maps placemarks:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Read polygon overlays (clusters) from My Maps
+ */
+async function readMyMapsPolygons(auth, mapsFileId) {
+  try {
+    const kmlContent = await downloadMyMapsKML(auth, mapsFileId);
+    const { polygons } = parseKMLPolygons(kmlContent);
+    return polygons;
+  } catch (error) {
+    console.error('Error reading My Maps polygons:', error.message);
     throw error;
   }
 }
@@ -146,6 +214,7 @@ async function updatePlacemarkColor(auth, mapsFileId, venueName, visited) {
 
 module.exports = {
   readMyMapsPlacemarks,
+  readMyMapsPolygons,
   syncVenuesToMaps,
   updatePlacemarkColor,
 };

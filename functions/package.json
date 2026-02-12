@@ -4,12 +4,13 @@
   "description": "Google Cloud Functions for syncing Sheets and My Maps",
   "main": "src/index.js",
   "scripts": {
-    "start": "functions-framework --target=syncHandler",
+    "start": "HOST=0.0.0.0 PORT=9090 functions-framework --target=syncHandler",
     "deploy": "gcloud functions deploy syncHandler --runtime nodejs18 --trigger http --allow-unauthenticated"
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^3.3.0",
     "@google-cloud/secret-manager": "^5.0.1",
+    "dotenv": "^16.4.5",
     "googleapis": "^128.0.0",
     "fast-xml-parser": "^4.3.2",
     "cors": "^2.8.5"

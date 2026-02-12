@@ -28,7 +28,7 @@ function getMarkerIcon(google, visited) {
     fillOpacity: 1,
     strokeColor: '#ffffff',
     strokeWeight: 2,
-    scale: 7,
+    scale: 10.5,
   };
 }
 
@@ -49,12 +49,13 @@ async function geocodeAddress(geocoder, address) {
  * Map Viewer Component
  * Renders Google Maps with markers from Sheets data.
  */
-function MapViewer({ venues, onVenueClick }) {
+function MapViewer({ venues, onVenueClick, selectedVenue, clusters }) {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef(new Map());
   const geocodeCacheRef = useRef(new Map());
   const clustererRef = useRef(null);
+  const polygonsRef = useRef([]);
   const googleRef = useRef(null);
   const geocoderRef = useRef(null);
   const geocodeJobRef = useRef(null);
@@ -123,7 +124,16 @@ function MapViewer({ venues, onVenueClick }) {
   }, [apiKey]);
 
   useEffect(() => {
-    if (!mapRef.current || !googleRef.current || !venues?.length) {
+    if (!mapRef.current || !googleRef.current) {
+      return;
+    }
+
+    if (!venues || venues.length === 0) {
+      markersRef.current.forEach((marker) => marker.setMap(null));
+      markersRef.current.clear();
+      if (clustererRef.current) {
+        clustererRef.current.clearMarkers();
+      }
       return;
     }
 
@@ -260,6 +270,57 @@ function MapViewer({ venues, onVenueClick }) {
 
     runGeocode();
   }, [venues, onVenueClick, fitToMarkers]);
+
+  useEffect(() => {
+    if (!selectedVenue || !mapRef.current || !googleRef.current) {
+      return;
+    }
+    const venueId = selectedVenue.name;
+    if (!venueId) {
+      return;
+    }
+    const existingMarker = markersRef.current.get(venueId);
+    if (existingMarker?.getPosition()) {
+      mapRef.current.panTo(existingMarker.getPosition());
+      mapRef.current.setZoom(19);
+      return;
+    }
+    const direct = getLatLng(selectedVenue);
+    if (direct) {
+      mapRef.current.panTo(direct);
+      mapRef.current.setZoom(19);
+    }
+  }, [selectedVenue]);
+
+  useEffect(() => {
+    if (!mapRef.current || !googleRef.current) {
+      return;
+    }
+    polygonsRef.current.forEach((polygon) => polygon.setMap(null));
+    polygonsRef.current = [];
+    if (!clusters || clusters.length === 0) {
+      return;
+    }
+    const google = googleRef.current;
+    clusters.forEach((cluster) => {
+      const paths = Array.isArray(cluster.paths) ? cluster.paths : [];
+      if (paths.length === 0) {
+        return;
+      }
+      const polygon = new google.maps.Polygon({
+        paths,
+        strokeColor: cluster.strokeColor || '#6b4f2a',
+        strokeOpacity: cluster.strokeOpacity ?? 0.6,
+        strokeWeight: cluster.strokeWeight || 2,
+        fillColor: cluster.fillColor || cluster.strokeColor || '#d9c3a1',
+        fillOpacity: cluster.fillOpacity ?? 0.2,
+        clickable: false,
+        zIndex: 1,
+      });
+      polygon.setMap(mapRef.current);
+      polygonsRef.current.push(polygon);
+    });
+  }, [clusters]);
 
   if (loadError) {
     return (

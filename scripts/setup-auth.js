@@ -7,6 +7,8 @@
  * Usage: node setup-auth.js
  */
 
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', 'functions', '.env') });
 const { google } = require('googleapis');
 const readline = require('readline');
 const { SecretManagerServiceClient } = require('@google-cloud/secret-manager');

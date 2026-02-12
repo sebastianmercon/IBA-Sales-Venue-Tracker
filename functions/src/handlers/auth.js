@@ -67,11 +67,15 @@ async function storeTokens(projectId, secretName, tokens) {
  */
 async function getAuthenticatedClient(projectId, secretName) {
   const tokens = await getStoredTokens(projectId, secretName);
+
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    throw new Error('Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET. Set them in functions/.env and restart.');
+  }
   
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI
+    process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000'
   );
 
   oauth2Client.setCredentials(tokens);

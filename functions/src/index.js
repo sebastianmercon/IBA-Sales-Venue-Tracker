@@ -6,13 +6,15 @@
  * All state comes from Google Sheets (source of truth)
  */
 
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const functions = require('@google-cloud/functions-framework');
 const cors = require('cors')({ origin: true });
 
 const { getConfig } = require('./utils/config');
 const { getAuthenticatedClient } = require('./handlers/auth');
 const { readVenues, updateVisitedStatus, updateVenueCoordinates } = require('./handlers/sheets');
-const { syncVenuesToMaps, updatePlacemarkColor } = require('./handlers/maps');
+const { syncVenuesToMaps, updatePlacemarkColor, readMyMapsPolygons } = require('./handlers/maps');
 const { syncSheetsToMaps, getSyncStatus } = require('./handlers/sync');
 
 /**
@@ -98,6 +100,15 @@ functions.http('syncHandler', async (req, res) => {
       if (method === 'GET' && path === '/api/sync') {
         const result = await syncSheetsToMaps(auth, config.sheetsId, config.sheetName, config.mapsId);
         return res.status(200).json(result);
+      }
+
+      // Get cluster polygons from My Maps
+      if (method === 'GET' && path === '/api/clusters') {
+        const polygons = await readMyMapsPolygons(auth, config.mapsId);
+        return res.status(200).json({
+          success: true,
+          polygons,
+        });
       }
 
       // 404 for unknown routes
