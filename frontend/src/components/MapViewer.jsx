@@ -21,14 +21,70 @@ function getLatLng(venue) {
   return { lat, lng };
 }
 
-function getMarkerIcon(google, visited) {
+// --- On-premise / Off-premise marker helpers ---
+const VISITED_COLOR = '#22c55e';
+const NOT_VISITED_COLOR = '#ef4444';
+const ON_PREMISE_BORDER = '#D4A017'; // Gold
+const OFF_PREMISE_BORDER = '#1E3A5F'; // Navy
+const DEFAULT_BORDER = '#ffffff';
+const MARKER_RADIUS = 14;
+const BORDER_THICKNESS = 6;
+const MARKER_RENDER_SCALE = 0.85; // 15% smaller
+
+function normalizePremise(value) {
+  const v = String(value || '').toLowerCase().trim().replace(/[-_\s]/g, '');
+  if (v.startsWith('on') || v === 'restaurant' || v === 'bar') return 'on';
+  if (v.startsWith('off') || v === 'retail' || v === 'store' || v === 'shop') return 'off';
+  return null;
+}
+
+function buildMarkerSvg(fillColor, borderColor, premiseType) {
+  const size = (MARKER_RADIUS + BORDER_THICKNESS) * 2;
+  const cx = size / 2;
+  const cy = size / 2;
+
+  let iconPath = '';
+  if (premiseType === 'on') {
+    // Extra-large fork/knife glyph with thicker strokes for visibility
+    iconPath = `<g transform="translate(${cx - 10.5}, ${cy - 11})" fill="none" stroke="white" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+      <!-- Fork -->
+      <line x1="2.8" y1="1.8" x2="2.8" y2="6.2"/>
+      <line x1="4.4" y1="1.8" x2="4.4" y2="6.2"/>
+      <line x1="6.0" y1="1.8" x2="6.0" y2="6.2"/>
+      <line x1="4.4" y1="6.2" x2="4.4" y2="16.2"/>
+      <!-- Knife -->
+      <path d="M11.8 1.8c0 3.1 0 5.8-2.6 8.6"/>
+      <line x1="9.2" y1="10.4" x2="9.2" y2="16.2"/>
+    </g>`;
+  } else if (premiseType === 'off') {
+    // Shopping bag (scaled & centered)
+    iconPath = `<g transform="translate(${cx - 8}, ${cy - 8}) scale(1.0)" fill="none" stroke="white" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="7" width="10" height="8" rx="1" fill="white" fill-opacity="0.25"/>
+      <path d="M6 7V5a2.5 2.5 0 0 1 5 0v2"/>
+      <line x1="5" y1="10" x2="5" y2="10.01"/>
+      <line x1="11" y1="10" x2="11" y2="10.01"/>
+    </g>`;
+  }
+
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">` +
+      `<circle cx="${cx}" cy="${cy}" r="${MARKER_RADIUS + BORDER_THICKNESS}" fill="${borderColor}" />` +
+      `<circle cx="${cx}" cy="${cy}" r="${MARKER_RADIUS}" fill="${fillColor}" />` +
+      iconPath +
+    `</svg>`
+  )}`;
+}
+
+function getMarkerIcon(google, visited, premiseType) {
+  const fillColor = visited ? VISITED_COLOR : NOT_VISITED_COLOR;
+  const premise = normalizePremise(premiseType);
+  const borderColor = premise === 'on' ? ON_PREMISE_BORDER : premise === 'off' ? OFF_PREMISE_BORDER : DEFAULT_BORDER;
+  const size = (MARKER_RADIUS + BORDER_THICKNESS) * 2;
+  const renderedSize = size * MARKER_RENDER_SCALE;
   return {
-    path: google.maps.SymbolPath.CIRCLE,
-    fillColor: visited ? '#22c55e' : '#ef4444',
-    fillOpacity: 1,
-    strokeColor: '#ffffff',
-    strokeWeight: 2,
-    scale: 10.5,
+    url: buildMarkerSvg(fillColor, borderColor, premise),
+    scaledSize: new google.maps.Size(renderedSize, renderedSize),
+    anchor: new google.maps.Point(renderedSize / 2, renderedSize / 2),
   };
 }
 
@@ -161,14 +217,14 @@ function MapViewer({ venues, onVenueClick, selectedVenue, clusters }) {
         const existing = markers.get(venueId);
         if (existing) {
           existing.setPosition(latLng);
-          existing.setIcon(getMarkerIcon(google, venue.visited));
+          existing.setIcon(getMarkerIcon(google, venue.visited, venue.premiseType));
           markerList.push(existing);
         } else {
           const marker = new google.maps.Marker({
             map,
             position: latLng,
             title: venue.name,
-            icon: getMarkerIcon(google, venue.visited),
+            icon: getMarkerIcon(google, venue.visited, venue.premiseType),
           });
           marker.addListener('click', () => {
             if (onVenueClick) {
@@ -239,7 +295,7 @@ function MapViewer({ venues, onVenueClick, selectedVenue, clusters }) {
             map,
             position: latLng,
             title: venue.name,
-            icon: getMarkerIcon(google, venue.visited),
+            icon: getMarkerIcon(google, venue.visited, venue.premiseType),
           });
           marker.addListener('click', () => {
             if (onVenueClick) {

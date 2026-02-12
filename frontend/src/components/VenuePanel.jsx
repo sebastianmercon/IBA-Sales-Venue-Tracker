@@ -12,6 +12,14 @@ function VenuePanel({ venue, onClose, onUpdate }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const premiseDisplay = (() => {
+    const raw = String(venue?.premiseType || '').trim().toLowerCase().replace(/[-_\s]/g, '');
+    if (raw.startsWith('on')) return 'On-Premise';
+    if (raw.startsWith('off')) return 'Off-Premise';
+    if (raw) return venue.premiseType;
+    return null;
+  })();
+
   const clusterDisplay = (() => {
     const raw = String(venue?.clusterId || '').trim();
     if (!raw) {
@@ -156,6 +164,19 @@ function VenuePanel({ venue, onClose, onUpdate }) {
           <label className="venue-panel-label">Cluster Number</label>
           <div className="venue-panel-value">{clusterDisplay}</div>
         </div>
+
+        {premiseDisplay && (
+          <div className="venue-panel-section">
+            <label className="venue-panel-label">Premise Type</label>
+            <div className="venue-panel-value venue-panel-premise">
+              <span
+                className={`premise-badge ${premiseDisplay === 'On-Premise' ? 'premise-on' : 'premise-off'}`}
+              >
+                {premiseDisplay}
+              </span>
+            </div>
+          </div>
+        )}
 
         {venue.assignedRep && (
           <div className="venue-panel-section">
