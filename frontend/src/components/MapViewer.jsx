@@ -105,7 +105,7 @@ async function geocodeAddress(geocoder, address) {
  * Map Viewer Component
  * Renders Google Maps with markers from Sheets data.
  */
-function MapViewer({ venues, onVenueClick, selectedVenue, clusters }) {
+function MapViewer({ venues, onVenueClick, selectedVenue, selectedVenueFocusNonce, clusters }) {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef(new Map());
@@ -344,17 +344,27 @@ function MapViewer({ venues, onVenueClick, selectedVenue, clusters }) {
       return;
     }
     const existingMarker = markersRef.current.get(venueId);
-    if (existingMarker?.getPosition()) {
-      mapRef.current.panTo(existingMarker.getPosition());
+    const focusMap = (target) => {
+      mapRef.current.panTo(target);
       mapRef.current.setZoom(19);
+      // Re-apply focus after layout settles (mobile overlays can mask first pan).
+      setTimeout(() => {
+        if (mapRef.current) {
+          mapRef.current.panTo(target);
+          mapRef.current.setZoom(19);
+        }
+      }, 120);
+    };
+
+    if (existingMarker?.getPosition()) {
+      focusMap(existingMarker.getPosition());
       return;
     }
     const direct = getLatLng(selectedVenue);
     if (direct) {
-      mapRef.current.panTo(direct);
-      mapRef.current.setZoom(19);
+      focusMap(direct);
     }
-  }, [selectedVenue]);
+  }, [selectedVenue, selectedVenueFocusNonce]);
 
   useEffect(() => {
     if (!mapRef.current || !googleRef.current) {

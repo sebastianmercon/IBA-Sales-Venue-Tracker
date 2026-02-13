@@ -14,6 +14,7 @@ import './App.css';
 function App() {
   const [venues, setVenues] = useState([]);
   const [selectedVenue, setSelectedVenue] = useState(null);
+  const [selectedVenueFocusNonce, setSelectedVenueFocusNonce] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
@@ -25,6 +26,7 @@ function App() {
   );
   const [clusterPolygons, setClusterPolygons] = useState([]);
   const pollingServiceRef = React.useRef(null);
+  const venueDetailsRef = React.useRef(null);
   const normalizeName = useCallback((value) => String(value || '').trim().toLowerCase(), []);
 
   useEffect(() => {
@@ -102,7 +104,8 @@ function App() {
       v => normalizeName(v.name) === normalizedTarget
     );
     if (venue) {
-      setSelectedVenue(venue);
+      setSelectedVenue({ ...venue });
+      setSelectedVenueFocusNonce((prev) => prev + 1);
     }
   }, [venues, normalizeName]);
 
@@ -110,7 +113,11 @@ function App() {
    * Handle manual venue selection (for testing or future features)
    */
   const handleVenueSelect = (venue) => {
-    setSelectedVenue(venue);
+    setSelectedVenue({ ...venue });
+    setSelectedVenueFocusNonce((prev) => prev + 1);
+    if (venueDetailsRef.current) {
+      venueDetailsRef.current.open = false;
+    }
   };
 
   /**
@@ -308,6 +315,7 @@ function App() {
             venues={priorityFilteredVenues}
             onVenueClick={handlePlacemarkClick}
             selectedVenue={selectedVenue}
+            selectedVenueFocusNonce={selectedVenueFocusNonce}
             clusters={clusterPolygons}
           />
         </div>
@@ -324,7 +332,7 @@ function App() {
       {/* Venue list overlay for selection */}
       {venues.length > 0 && (
         <div className="app-venue-list">
-          <details>
+          <details ref={venueDetailsRef}>
             <summary>Select Venue</summary>
             <input
               type="text"
@@ -337,6 +345,7 @@ function App() {
               {filteredVenues.map((venue) => (
                 <li key={venue.name}>
                   <button
+                    type="button"
                     onClick={() => handleVenueSelect(venue)}
                     className={`venue-list-item ${venue.visited ? 'visited' : 'not-visited'}`}
                   >
