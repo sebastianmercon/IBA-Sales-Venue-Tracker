@@ -408,8 +408,14 @@ function MapViewer({ venues, onVenueClick, selectedVenue, selectedVenueFocusNonc
 
   return (
     <div className="map-viewer-container map-viewer-map" ref={mapContainerRef}>
-      <button className="map-fit-button" onClick={fitToMarkers} type="button">
-        Fit to markers
+      <button className="map-fit-button" onClick={fitToMarkers} type="button" aria-label="Fit to markers" title="Fit to markers">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 6V3a1 1 0 0 1 1-1h3"/>
+          <path d="M12 2h3a1 1 0 0 1 1 1v3"/>
+          <path d="M16 12v3a1 1 0 0 1-1 1h-3"/>
+          <path d="M6 16H3a1 1 0 0 1-1-1v-3"/>
+          <circle cx="9" cy="9" r="2.5"/>
+        </svg>
       </button>
       {geocodeMessage && (
         <div className="map-viewer-warning">

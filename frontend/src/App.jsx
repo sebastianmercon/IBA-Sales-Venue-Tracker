@@ -1,9 +1,28 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import MapViewer from './components/MapViewer';
 import VenuePanel from './components/VenuePanel';
 import PollingService from './services/polling';
 import { getClusterPolygons, getVenues } from './services/api';
 import './App.css';
+
+// Sky-phase palette — inspired by the Oaxacan sky from dawn to midnight
+const CLUSTER_COLORS = [
+  '#E86F2D', // 1 dawn / sunrise orange
+  '#D4A017', // 2 morning / golden hour
+  '#C65A3A', // 3 midday / terracotta
+  '#1E3A5F', // 4 dusk / deep navy
+  '#5B3A7A', // 5 twilight / violet
+  '#2A6B5E', // 6 night / deep teal
+  '#8B4513', // 7 earth / agave brown
+];
+
+function getClusterColor(clusterId) {
+  const raw = String(clusterId || '').trim();
+  const match = raw.match(/\d+/);
+  if (!match) return null;
+  const num = parseInt(match[0], 10);
+  return CLUSTER_COLORS[(num - 1) % CLUSTER_COLORS.length] || null;
+}
 
 /**
  * Main App Component
@@ -24,6 +43,8 @@ function App() {
   const [showStartMenu, setShowStartMenu] = useState(
     () => localStorage.getItem('svt_hide_start_menu') !== 'true'
   );
+  const [showFilters, setShowFilters] = useState(false);
+  const [premiseFilter, setPremiseFilter] = useState('all');
   const [clusterPolygons, setClusterPolygons] = useState([]);
   const pollingServiceRef = React.useRef(null);
   const venueDetailsRef = React.useRef(null);
@@ -189,13 +210,34 @@ function App() {
     return true;
   });
 
+  const normalizePremiseValue = (value) => {
+    const v = String(value || '').toLowerCase().trim().replace(/[-_\s]/g, '');
+    if (v.startsWith('on') || v === 'restaurant' || v === 'bar') return 'on';
+    if (v.startsWith('off') || v === 'retail' || v === 'store' || v === 'shop') return 'off';
+    return null;
+  };
+
+  const premiseFilteredVenues = priorityFilteredVenues.filter((venue) => {
+    if (premiseFilter === 'all') return true;
+    const premise = normalizePremiseValue(venue.premiseType);
+    return premise === premiseFilter;
+  });
+
   const filteredVenues = normalizedQuery
-    ? priorityFilteredVenues.filter((venue) =>
+    ? premiseFilteredVenues.filter((venue) =>
         venue.name.toLowerCase().includes(normalizedQuery)
       )
-    : priorityFilteredVenues;
+    : premiseFilteredVenues;
   const visitedCount = venues.filter((venue) => venue.visited).length;
   const remainingCount = Math.max(venues.length - visitedCount, 0);
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (showOnlyUnvisited) count++;
+    if (priorityFilter !== 'all') count++;
+    if (premiseFilter !== 'all') count++;
+    return count;
+  }, [showOnlyUnvisited, priorityFilter, premiseFilter]);
 
   return (
     <div className="app">
@@ -204,10 +246,10 @@ function App() {
           <div className="start-menu-card">
             <div className="start-menu-header">
               <div>
-                <p className="start-menu-eyebrow">SalesVenueTracker</p>
-                <h2 className="start-menu-title">Welcome back</h2>
+                <p className="start-menu-eyebrow">IBÁ Mezcal</p>
+                <h2 className="start-menu-title">Celebrate the Journey</h2>
                 <p className="start-menu-subtitle">
-                  Track visits, update statuses, and keep the team aligned with a clean view of venues.
+                  Track every venue, update visit statuses, and keep the team moving with purpose.
                 </p>
               </div>
               <button
@@ -222,7 +264,7 @@ function App() {
 
             <div className="start-menu-stats">
               <div>
-                <p className="start-menu-stat-label">Total venues</p>
+                <p className="start-menu-stat-label">Venues</p>
                 <p className="start-menu-stat-value">{venues.length}</p>
               </div>
               <div>
@@ -246,23 +288,23 @@ function App() {
                 type="button"
                 onClick={() => setShowStartMenu(false)}
               >
-                Enter dashboard
+                Enter Dashboard
               </button>
               <button
                 className="start-menu-secondary"
                 type="button"
                 onClick={loadVenues}
               >
-                Refresh venues
+                Sync Venues
               </button>
             </div>
 
             <div className="start-menu-help">
-              <p className="start-menu-help-title">Quick tips</p>
+              <p className="start-menu-help-title">How it works</p>
               <ul>
-                <li>Use the search box to jump to a venue fast.</li>
-                <li>Tap a marker or pick a venue to update visited status.</li>
-                <li>The map clusters markers automatically for smoother performance.</li>
+                <li>Search or tap a marker to find a venue instantly.</li>
+                <li>Update visit statuses in one tap — the sheet syncs automatically.</li>
+                <li>Clusters dissolve as you zoom in, revealing individual venues.</li>
               </ul>
             </div>
           </div>
@@ -270,49 +312,106 @@ function App() {
       )}
 
       <div className="app-header">
-        <h1 className="app-title">IBÁ Sales Venue Tracker</h1>
-        <div className="app-status">
-          {loading && <span className="status-loading">Loading...</span>}
+        <div className="app-header-left">
+          <h1 className="app-title">IBÁ</h1>
+          <span className="app-title-sub">Sales Venue Tracker</span>
+          {loading && <span className="status-loading">Syncing...</span>}
           {error && <span className="status-error">{error}</span>}
+        </div>
+        <div className="app-header-right">
           <button
-            className={`app-filter-button ${showOnlyUnvisited ? 'active' : ''}`}
+            className={`app-header-btn ${showFilters ? 'app-header-btn--active' : ''}`}
             type="button"
-            onClick={() => setShowOnlyUnvisited((prev) => !prev)}
+            onClick={() => setShowFilters((prev) => !prev)}
           >
-            Show only unvisited
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M1.5 2h13M3.5 6h9M5.5 10h5M7 14h2"/></svg>
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="filter-count-badge">{activeFilterCount}</span>
+            )}
           </button>
           <button
-            className={`app-filter-button ${priorityFilter === 'priority12' ? 'active' : ''}`}
-            type="button"
-            onClick={() =>
-              setPriorityFilter((prev) => (prev === 'priority12' ? 'all' : 'priority12'))
-            }
-          >
-            Priority 1-2
-          </button>
-          <button
-            className={`app-filter-button ${priorityFilter === 'priority3' ? 'active' : ''}`}
-            type="button"
-            onClick={() =>
-              setPriorityFilter((prev) => (prev === 'priority3' ? 'all' : 'priority3'))
-            }
-          >
-            Priority 3
-          </button>
-          <button
-            className="app-menu-button"
+            className="app-header-btn"
             type="button"
             onClick={() => setShowStartMenu(true)}
           >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="14" y2="8"/><line x1="2" y1="12" x2="14" y2="12"/></svg>
             Menu
           </button>
         </div>
+        <div className="app-header-accent" />
       </div>
+
+      {showFilters && (
+        <div className="filters-drawer">
+          <div className="filters-drawer-inner">
+            <span className="filters-label">Filter by</span>
+            <button
+              className={`filter-chip ${showOnlyUnvisited ? 'filter-chip--active' : ''}`}
+              type="button"
+              onClick={() => setShowOnlyUnvisited((prev) => !prev)}
+            >
+              Unvisited only
+            </button>
+            <span className="filters-divider" />
+            <button
+              className={`filter-chip ${priorityFilter === 'priority12' ? 'filter-chip--active' : ''}`}
+              type="button"
+              onClick={() =>
+                setPriorityFilter((prev) => (prev === 'priority12' ? 'all' : 'priority12'))
+              }
+            >
+              Priority 1-2
+            </button>
+            <button
+              className={`filter-chip ${priorityFilter === 'priority3' ? 'filter-chip--active' : ''}`}
+              type="button"
+              onClick={() =>
+                setPriorityFilter((prev) => (prev === 'priority3' ? 'all' : 'priority3'))
+              }
+            >
+              Priority 3
+            </button>
+            <span className="filters-divider" />
+            <button
+              className={`filter-chip ${premiseFilter === 'on' ? 'filter-chip--active' : ''}`}
+              type="button"
+              onClick={() =>
+                setPremiseFilter((prev) => (prev === 'on' ? 'all' : 'on'))
+              }
+            >
+              On-Premise
+            </button>
+            <button
+              className={`filter-chip ${premiseFilter === 'off' ? 'filter-chip--active' : ''}`}
+              type="button"
+              onClick={() =>
+                setPremiseFilter((prev) => (prev === 'off' ? 'all' : 'off'))
+              }
+            >
+              Off-Premise
+            </button>
+            {(showOnlyUnvisited || priorityFilter !== 'all' || premiseFilter !== 'all') && (
+              <button
+                className="filter-chip filter-chip--clear"
+                type="button"
+                onClick={() => {
+                  setShowOnlyUnvisited(false);
+                  setPriorityFilter('all');
+                  setPremiseFilter('all');
+                }}
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="app-content">
         <div className="app-map-container">
           <MapViewer
-            venues={priorityFilteredVenues}
+            venues={premiseFilteredVenues}
             onVenueClick={handlePlacemarkClick}
             selectedVenue={selectedVenue}
             selectedVenueFocusNonce={selectedVenueFocusNonce}
@@ -333,27 +432,58 @@ function App() {
       {venues.length > 0 && (
         <div className="app-venue-list">
           <details ref={venueDetailsRef}>
-            <summary>Select Venue</summary>
+            <summary>Find a Venue ({filteredVenues.length})</summary>
             <input
               type="text"
               className="venue-search-input"
-              placeholder="Search venues..."
+              placeholder="Search by name..."
               value={venueQuery}
               onChange={(event) => setVenueQuery(event.target.value)}
             />
             <ul>
-              {filteredVenues.map((venue) => (
-                <li key={venue.name}>
-                  <button
-                    type="button"
-                    onClick={() => handleVenueSelect(venue)}
-                    className={`venue-list-item ${venue.visited ? 'visited' : 'not-visited'}`}
-                  >
-                    {venue.name} - {venue.visited ? '✓' : '○'}
-                  </button>
-                </li>
-              ))}
+              {filteredVenues.map((venue) => {
+                const clusterColor = getClusterColor(venue.clusterId);
+                const premiseVal = normalizePremiseValue(venue.premiseType);
+                return (
+                  <li key={venue.name}>
+                    <button
+                      type="button"
+                      onClick={() => handleVenueSelect(venue)}
+                      className={`venue-card ${venue.visited ? 'venue-card--visited' : 'venue-card--unvisited'}`}
+                    >
+                      <span className="venue-card-status" aria-label={venue.visited ? 'Visited' : 'Not visited'} />
+                      <span className="venue-card-body">
+                        <span className="venue-card-name">{venue.name}</span>
+                        <span className="venue-card-meta">
+                          {venue.neighborhood && <span>{venue.neighborhood}</span>}
+                          {premiseVal && (
+                            <span className={`venue-card-premise venue-card-premise--${premiseVal}`}>
+                              {premiseVal === 'on' ? 'On-Prem' : 'Off-Prem'}
+                            </span>
+                          )}
+                        </span>
+                      </span>
+                      {clusterColor && (
+                        <span className="venue-card-cluster" style={{ background: clusterColor }}>
+                          {String(venue.clusterId).replace(/\D/g, '')}
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
+            <div className="venue-list-close-wrap">
+              <button
+                type="button"
+                className="venue-list-close"
+                onClick={() => { if (venueDetailsRef.current) venueDetailsRef.current.open = false; }}
+                aria-label="Close venue list"
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 5.5L7 9l3.5-3.5"/></svg>
+                Close
+              </button>
+            </div>
           </details>
         </div>
       )}

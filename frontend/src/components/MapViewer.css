@@ -14,9 +14,10 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #666;
+  color: var(--iba-warm-500, #8A8078);
   text-align: center;
   padding: 20px;
+  font-size: 14px;
 }
 
 .map-viewer-error p {
@@ -28,33 +29,40 @@
   left: 16px;
   bottom: 16px;
   max-width: 320px;
-  background: #fff4e5;
-  color: #7a4b00;
-  border: 1px solid #ffd199;
-  padding: 10px 12px;
-  border-radius: 8px;
+  background: rgba(212,160,23,0.1);
+  color: #92700e;
+  border: 1px solid rgba(212,160,23,0.3);
+  padding: 10px 14px;
+  border-radius: 10px;
   font-size: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 4px 12px rgba(22, 22, 22, 0.08);
   z-index: 5;
+  backdrop-filter: blur(8px);
 }
 
 .map-fit-button {
   position: absolute;
-  top: 16px;
-  right: 16px;
+  top: 12px;
+  right: 12px;
   z-index: 6;
-  padding: 8px 12px;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 10px;
-  border: 1px solid #eadfce;
-  background: rgba(252, 250, 246, 0.95);
-  color: #24170f;
-  font-size: 12px;
-  font-weight: 600;
+  border: 1px solid var(--iba-warm-200, #EDE8E0);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  color: var(--iba-charcoal, #161616);
   cursor: pointer;
-  box-shadow: 0 8px 18px rgba(46, 34, 23, 0.16);
+  box-shadow: 0 2px 12px rgba(22, 22, 22, 0.1);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .map-fit-button:hover {
-  background: #f6ede0;
-  border-color: #d9c3a1;
+  background: var(--iba-warm-100, #FAF8F4);
+  border-color: var(--iba-gold, #D4A017);
+  box-shadow: 0 4px 16px rgba(212,160,23,0.15);
+  color: var(--iba-gold, #D4A017);
 }
