@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader } from '@googlemaps/js-api-loader';
-import { MarkerClusterer } from '@googlemaps/markerclusterer';
+import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
 import { updateVenueCoordinates } from '../services/api';
 import './MapViewer.css';
 
@@ -166,7 +166,15 @@ function MapViewer({ venues, onVenueClick, selectedVenue, clusters }) {
           gestureHandling: 'greedy',
         });
         geocoderRef.current = new google.maps.Geocoder();
-        clustererRef.current = new MarkerClusterer({ map: mapRef.current });
+        clustererRef.current = new MarkerClusterer({
+          map: mapRef.current,
+          // Show real venue markers sooner while zooming in.
+          algorithm: new SuperClusterAlgorithm({
+            maxZoom: 14,
+            radius: 45,
+            minPoints: 3,
+          }),
+        });
       })
       .catch((error) => {
         if (!canceled) {
