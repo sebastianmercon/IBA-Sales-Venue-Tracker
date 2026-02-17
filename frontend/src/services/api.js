@@ -65,6 +65,40 @@ export async function updateVenueCoordinates(venueName, latitude, longitude) {
   }
 }
 
+export async function enrichProspect(venueName, latitude, longitude) {
+  try {
+    const response = await api.post('/api/prospects/enrich', {
+      venueName,
+      latitude,
+      longitude,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error enriching prospect:', error);
+    throw error;
+  }
+}
+
+export async function createProspect(payload) {
+  try {
+    const response = await api.post('/api/prospects', payload);
+    return response.data;
+  } catch (error) {
+    console.error('Error creating prospect:', error);
+    throw error;
+  }
+}
+
+export async function updateProspect(identifier, payload) {
+  try {
+    const response = await api.patch(`/api/prospects/${encodeURIComponent(identifier)}`, payload);
+    return response.data;
+  } catch (error) {
+    console.error('Error updating prospect:', error);
+    throw error;
+  }
+}
+
 /**
  * Trigger manual sync
  */

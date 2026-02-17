@@ -50,7 +50,11 @@ async function downloadMyMapsKML(auth, mapsFileId) {
           exportError?.errors?.[0]?.reason ||
           exportError?.response?.data?.error?.errors?.[0]?.reason ||
           '';
-        if (exportReason === 'fileNotExportable') {
+        const isNotExportable =
+          exportReason === 'fileNotExportable' ||
+          String(exportError?.message || '').includes('fileNotExportable') ||
+          String(exportError?.message || '').includes('Export only supports');
+        if (isNotExportable) {
           const tokenResponse = await auth.getAccessToken();
           const accessToken = typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token;
           if (!accessToken) {

@@ -4,7 +4,7 @@
   "description": "Google Cloud Functions for syncing Sheets and My Maps",
   "main": "src/index.js",
   "scripts": {
-    "start": "HOST=0.0.0.0 PORT=9090 functions-framework --target=syncHandler",
+    "start": "HOST=0.0.0.0 PORT=9090 functions-framework --source=src/index.js --target=syncHandler",
     "deploy": "gcloud functions deploy syncHandler --runtime nodejs18 --trigger http --allow-unauthenticated"
   },
   "dependencies": {

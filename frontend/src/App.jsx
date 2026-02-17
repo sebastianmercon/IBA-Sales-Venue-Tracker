@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import MapViewer from './components/MapViewer';
 import VenuePanel from './components/VenuePanel';
 import PollingService from './services/polling';
-import { getClusterPolygons, getVenues } from './services/api';
+import { createProspect, enrichProspect, getClusterPolygons, getVenues, updateProspect } from './services/api';
 import './App.css';
 
 // Sky-phase palette — inspired by the Oaxacan sky from dawn to midnight
@@ -15,6 +15,9 @@ const CLUSTER_COLORS = [
   '#2A6B5E', // 6 night / deep teal
   '#8B4513', // 7 earth / agave brown
 ];
+
+const VIRTUAL_ROW_HEIGHT = 60;
+const VIRTUAL_OVERSCAN = 6;
 
 function getClusterColor(clusterId) {
   const raw = String(clusterId || '').trim();
@@ -31,6 +34,25 @@ function getClusterColor(clusterId) {
  * Immediate UI updates after user actions, full consistency via polling
  */
 function App() {
+  const normalizeName = useCallback((value) => String(value || '').trim().toLowerCase(), []);
+  const [cachedCoordinates, setCachedCoordinates] = useState(() => {
+    try {
+      const raw = localStorage.getItem('svt_cached_coordinates');
+      const parsed = raw ? JSON.parse(raw) : {};
+      return typeof parsed === 'object' && parsed ? parsed : {};
+    } catch (error) {
+      return {};
+    }
+  });
+  const [prospectVisitedOverrides, setProspectVisitedOverrides] = useState(() => {
+    try {
+      const raw = localStorage.getItem('svt_prospect_visited_overrides');
+      const parsed = raw ? JSON.parse(raw) : {};
+      return typeof parsed === 'object' && parsed ? parsed : {};
+    } catch (error) {
+      return {};
+    }
+  });
   const [venues, setVenues] = useState([]);
   const [selectedVenue, setSelectedVenue] = useState(null);
   const [selectedVenueFocusNonce, setSelectedVenueFocusNonce] = useState(0);
@@ -46,65 +68,138 @@ function App() {
   const [showFilters, setShowFilters] = useState(false);
   const [premiseFilter, setPremiseFilter] = useState('all');
   const [clusterPolygons, setClusterPolygons] = useState([]);
+  const [addMode, setAddMode] = useState(false);
+  const [showNativePoi, setShowNativePoi] = useState(false);
+  const [prospectFormOpen, setProspectFormOpen] = useState(false);
+  const [prospectFormLoading, setProspectFormLoading] = useState(false);
+  const [prospectFormError, setProspectFormError] = useState(null);
+  const [prospectDraft, setProspectDraft] = useState({
+    name: '',
+    address: '',
+    notes: '',
+    latitude: null,
+    longitude: null,
+  });
+  const [enrichmentSuggestions, setEnrichmentSuggestions] = useState([]);
+  const [venueListScrollTop, setVenueListScrollTop] = useState(0);
+  const [venueListViewportHeight, setVenueListViewportHeight] = useState(300);
   const pollingServiceRef = React.useRef(null);
   const venueDetailsRef = React.useRef(null);
-  const normalizeName = useCallback((value) => String(value || '').trim().toLowerCase(), []);
+  const venueListScrollRef = React.useRef(null);
+  const applyCachedCoordinates = useCallback(
+    (venue) => {
+      if (!venue?.name) {
+        return venue;
+      }
+      const key = normalizeName(venue.name);
+      const hasValidLatitude = Number.isFinite(Number.parseFloat(venue.latitude));
+      const hasValidLongitude = Number.isFinite(Number.parseFloat(venue.longitude));
+      const cached = cachedCoordinates[key];
+      const withCoordinates = (hasValidLatitude && hasValidLongitude) || !cached
+        ? venue
+        : {
+            ...venue,
+            latitude: cached.latitude,
+            longitude: cached.longitude,
+          };
+      if (withCoordinates.recordType === 'prospect' && typeof prospectVisitedOverrides[key] === 'boolean') {
+        return {
+          ...withCoordinates,
+          visited: prospectVisitedOverrides[key],
+        };
+      }
+      return withCoordinates;
+    },
+    [cachedCoordinates, normalizeName, prospectVisitedOverrides]
+  );
+
+  const mapVenuesWithCachedCoordinates = useCallback(
+    (inputVenues) => (Array.isArray(inputVenues) ? inputVenues.map(applyCachedCoordinates) : []),
+    [applyCachedCoordinates]
+  );
+
+  useEffect(() => {
+    localStorage.setItem('svt_cached_coordinates', JSON.stringify(cachedCoordinates));
+  }, [cachedCoordinates]);
+
+  useEffect(() => {
+    localStorage.setItem('svt_prospect_visited_overrides', JSON.stringify(prospectVisitedOverrides));
+  }, [prospectVisitedOverrides]);
 
   useEffect(() => {
     localStorage.setItem('svt_hide_start_menu', showStartMenu ? 'false' : 'true');
   }, [showStartMenu]);
 
+  // Load venues + clusters in parallel on mount, then start polling.
   useEffect(() => {
     let canceled = false;
-    getClusterPolygons()
-      .then((data) => {
-        if (!canceled) {
-          setClusterPolygons(data.polygons || []);
-        }
-      })
-      .catch((error) => {
-        console.warn('Failed to load cluster polygons:', error?.message || error);
-      });
-    return () => {
-      canceled = true;
-    };
-  }, []);
-
-  // Initialize polling service
-  useEffect(() => {
     const pollingInterval = 60000; // 60 seconds
+
     pollingServiceRef.current = new PollingService(
       (updatedVenues, timestamp) => {
-        setVenues(updatedVenues);
+        setVenues(mapVenuesWithCachedCoordinates(updatedVenues));
         setLastSync(timestamp || new Date().toISOString());
         setError(null);
       },
       pollingInterval
     );
 
-    // Load initial data
-    loadVenues();
+    // Fetch both endpoints in parallel for faster initial load.
+    const loadInitial = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [venueData, clusterData] = await Promise.all([
+          getVenues().catch((err) => {
+            console.error('Error loading venues:', err);
+            return null;
+          }),
+          getClusterPolygons().catch((err) => {
+            console.warn('Failed to load cluster polygons:', err?.message || err);
+            return null;
+          }),
+        ]);
+        if (canceled) return;
+        if (venueData) {
+          setVenues(mapVenuesWithCachedCoordinates(venueData.venues || []));
+          setLastSync(venueData.timestamp || new Date().toISOString());
+        } else {
+          setError('Failed to load venues. Please check your connection.');
+        }
+        if (clusterData) {
+          setClusterPolygons(clusterData.polygons || []);
+        }
+      } finally {
+        if (!canceled) setLoading(false);
+      }
+    };
 
-    // Start polling
-    pollingServiceRef.current.start();
+    loadInitial();
 
-    // Cleanup on unmount
+    // Start polling AFTER initial load completes (avoids a duplicate fetch).
+    // The polling service's first interval tick is after pollingInterval ms.
+    pollingServiceRef.current.isPolling = true;
+    pollingServiceRef.current.pollingId = setInterval(() => {
+      pollingServiceRef.current.poll();
+    }, pollingInterval);
+
     return () => {
+      canceled = true;
       if (pollingServiceRef.current) {
         pollingServiceRef.current.stop();
       }
     };
-  }, []);
+  }, [mapVenuesWithCachedCoordinates]);
 
   /**
-   * Load venues from API
+   * Load venues from API (manual refresh)
    */
-  const loadVenues = async () => {
+  const loadVenues = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const data = await getVenues();
-      setVenues(data.venues || []);
+      setVenues(mapVenuesWithCachedCoordinates(data.venues || []));
       setLastSync(data.timestamp || new Date().toISOString());
     } catch (err) {
       console.error('Error loading venues:', err);
@@ -112,7 +207,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [mapVenuesWithCachedCoordinates]);
 
   /**
    * Handle placemark click from map
@@ -148,6 +243,17 @@ function App() {
     setSelectedVenue(null);
   };
 
+  const handleMapAddPoint = useCallback(({ lat, lng }) => {
+    setProspectDraft((prev) => ({
+      ...prev,
+      latitude: lat,
+      longitude: lng,
+    }));
+    setProspectFormError(null);
+    setEnrichmentSuggestions([]);
+    setProspectFormOpen(true);
+  }, []);
+
   /**
    * Handle venue update (after status change)
    */
@@ -171,6 +277,143 @@ function App() {
       pollingServiceRef.current.pollNow();
     }
   };
+
+  const handleProspectSave = async (event) => {
+    event.preventDefault();
+    if (!prospectDraft.name.trim()) {
+      setProspectFormError('Venue name is required.');
+      return;
+    }
+    setProspectFormLoading(true);
+    setProspectFormError(null);
+    try {
+      await createProspect(prospectDraft);
+      if (Number.isFinite(prospectDraft.latitude) && Number.isFinite(prospectDraft.longitude)) {
+        const key = normalizeName(prospectDraft.name);
+        setCachedCoordinates((prev) => ({
+          ...prev,
+          [key]: {
+            latitude: prospectDraft.latitude,
+            longitude: prospectDraft.longitude,
+          },
+        }));
+      }
+      setProspectFormOpen(false);
+      setProspectDraft({
+        name: '',
+        address: '',
+        notes: '',
+        latitude: null,
+        longitude: null,
+      });
+      await loadVenues();
+      if (pollingServiceRef.current) {
+        pollingServiceRef.current.pollNow();
+      }
+    } catch (err) {
+      setProspectFormError('Failed to save prospect. Please try again.');
+    } finally {
+      setProspectFormLoading(false);
+    }
+  };
+
+  const handleRunEnrichment = async () => {
+    if (!prospectDraft.name.trim()) {
+      setProspectFormError('Add a venue name before enrichment.');
+      return;
+    }
+    setProspectFormLoading(true);
+    setProspectFormError(null);
+    try {
+      const result = await enrichProspect(
+        prospectDraft.name,
+        prospectDraft.latitude,
+        prospectDraft.longitude
+      );
+      const suggestions = result?.suggestions || [];
+      setEnrichmentSuggestions(suggestions);
+      if (suggestions.length > 0) {
+        const top = suggestions[0];
+        setProspectDraft((prev) => ({
+          ...prev,
+          name: top.venueName || prev.name,
+          address: top.address || prev.address,
+          notes: [
+            prev.notes,
+            top.contactPhone ? `Phone: ${top.contactPhone}` : '',
+            top.website ? `Website: ${top.website}` : '',
+          ]
+            .filter(Boolean)
+            .join('\n')
+            .trim(),
+          latitude: Number.isFinite(top.latitude) ? top.latitude : prev.latitude,
+          longitude: Number.isFinite(top.longitude) ? top.longitude : prev.longitude,
+        }));
+      }
+    } catch (err) {
+      setProspectFormError('Enrichment failed. You can still save manually.');
+    } finally {
+      setProspectFormLoading(false);
+    }
+  };
+
+  const handleProspectPanelUpdate = async (identifier, payload) => {
+    const nextPayload = { ...payload };
+    if ('visited' in nextPayload) {
+      const key = normalizeName(identifier);
+      const nextVisited = Boolean(nextPayload.visited);
+      setProspectVisitedOverrides((prev) => ({
+        ...prev,
+        [key]: nextVisited,
+      }));
+      setVenues((prev) =>
+        prev.map((venue) =>
+          normalizeName(venue.name) === key ? { ...venue, visited: nextVisited } : venue
+        )
+      );
+      setSelectedVenue((prev) =>
+        normalizeName(prev?.name) === key ? { ...prev, visited: nextVisited } : prev
+      );
+      delete nextPayload.visited;
+    }
+    if (Object.keys(nextPayload).length > 0) {
+      await updateProspect(identifier, nextPayload);
+      await loadVenues();
+    }
+    if (selectedVenue?.name === identifier) {
+      setSelectedVenue((prev) => ({ ...prev, ...payload }));
+    }
+  };
+
+  const handleCoordinateResolved = useCallback(
+    (venueName, lat, lng) => {
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || !venueName) {
+        return;
+      }
+      const key = normalizeName(venueName);
+      setCachedCoordinates((prev) => {
+        const existing = prev[key];
+        if (existing && Number(existing.latitude) === lat && Number(existing.longitude) === lng) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [key]: {
+            latitude: lat,
+            longitude: lng,
+          },
+        };
+      });
+      setVenues((prev) =>
+        prev.map((venue) =>
+          normalizeName(venue.name) === key
+            ? { ...venue, latitude: lat, longitude: lng }
+            : venue
+        )
+      );
+    },
+    [normalizeName]
+  );
 
   const normalizedQuery = venueQuery.trim().toLowerCase();
   const visibleVenues = showOnlyUnvisited
@@ -238,6 +481,35 @@ function App() {
     if (premiseFilter !== 'all') count++;
     return count;
   }, [showOnlyUnvisited, priorityFilter, premiseFilter]);
+
+  const virtualRange = useMemo(() => {
+    const total = filteredVenues.length;
+    const start = Math.max(0, Math.floor(venueListScrollTop / VIRTUAL_ROW_HEIGHT) - VIRTUAL_OVERSCAN);
+    const end = Math.min(
+      total,
+      Math.ceil((venueListScrollTop + venueListViewportHeight) / VIRTUAL_ROW_HEIGHT) + VIRTUAL_OVERSCAN
+    );
+    return { start, end, total };
+  }, [filteredVenues.length, venueListScrollTop, venueListViewportHeight]);
+
+  const virtualVenues = useMemo(
+    () => filteredVenues.slice(virtualRange.start, virtualRange.end),
+    [filteredVenues, virtualRange.start, virtualRange.end]
+  );
+
+  const topSpacerHeight = virtualRange.start * VIRTUAL_ROW_HEIGHT;
+  const bottomSpacerHeight = Math.max(
+    0,
+    (virtualRange.total - virtualRange.end) * VIRTUAL_ROW_HEIGHT
+  );
+
+  useEffect(() => {
+    setVenueListScrollTop(0);
+    if (venueListScrollRef.current) {
+      venueListScrollRef.current.scrollTop = 0;
+      setVenueListViewportHeight(venueListScrollRef.current.clientHeight || 300);
+    }
+  }, [venueQuery, showOnlyUnvisited, priorityFilter, premiseFilter]);
 
   return (
     <div className="app">
@@ -319,6 +591,13 @@ function App() {
           {error && <span className="status-error">{error}</span>}
         </div>
         <div className="app-header-right">
+          <button
+            className={`app-header-btn ${addMode ? 'app-header-btn--active' : ''}`}
+            type="button"
+            onClick={() => setAddMode((prev) => !prev)}
+          >
+            + Add Venue
+          </button>
           <button
             className={`app-header-btn ${showFilters ? 'app-header-btn--active' : ''}`}
             type="button"
@@ -416,6 +695,12 @@ function App() {
             selectedVenue={selectedVenue}
             selectedVenueFocusNonce={selectedVenueFocusNonce}
             clusters={clusterPolygons}
+            addMode={addMode}
+            onToggleAddMode={setAddMode}
+            onMapAddPoint={handleMapAddPoint}
+            showNativePoi={showNativePoi}
+            onToggleNativePoi={setShowNativePoi}
+            onVenueCoordinateResolved={handleCoordinateResolved}
           />
         </div>
 
@@ -424,9 +709,55 @@ function App() {
             venue={selectedVenue}
             onClose={handleClosePanel}
             onUpdate={handleVenueUpdate}
+            onProspectUpdate={handleProspectPanelUpdate}
           />
         )}
       </div>
+
+      {prospectFormOpen && (
+        <div className="prospect-modal-backdrop">
+          <form className="prospect-modal-card" onSubmit={handleProspectSave}>
+            <h3>Add Prospect Venue</h3>
+            <p>Accounts tab fields: Venue Name, Address, Notes / Contact.</p>
+            <div className="prospect-modal-grid">
+              <input
+                type="text"
+                placeholder="Venue name"
+                value={prospectDraft.name}
+                onChange={(e) => setProspectDraft((prev) => ({ ...prev, name: e.target.value }))}
+              />
+              <input
+                type="text"
+                placeholder="Address"
+                value={prospectDraft.address}
+                onChange={(e) => setProspectDraft((prev) => ({ ...prev, address: e.target.value }))}
+              />
+              <textarea
+                placeholder="Notes / Contact info"
+                value={prospectDraft.notes}
+                onChange={(e) => setProspectDraft((prev) => ({ ...prev, notes: e.target.value }))}
+              />
+            </div>
+            {enrichmentSuggestions.length > 0 && (
+              <div className="prospect-enrichment-hint">
+                Suggestion: {enrichmentSuggestions[0].venueName} - {enrichmentSuggestions[0].address}
+              </div>
+            )}
+            {prospectFormError && <div className="prospect-form-error">{prospectFormError}</div>}
+            <div className="prospect-modal-actions">
+              <button type="button" onClick={handleRunEnrichment} disabled={prospectFormLoading}>
+                Auto-fill
+              </button>
+              <button type="button" onClick={() => setProspectFormOpen(false)} disabled={prospectFormLoading}>
+                Cancel
+              </button>
+              <button type="submit" disabled={prospectFormLoading}>
+                Save Prospect
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Venue list overlay for selection */}
       {venues.length > 0 && (
@@ -440,12 +771,22 @@ function App() {
               value={venueQuery}
               onChange={(event) => setVenueQuery(event.target.value)}
             />
-            <ul>
-              {filteredVenues.map((venue) => {
+            <div
+              className="venue-list-virtual-scroll"
+              ref={venueListScrollRef}
+              onScroll={(event) => {
+                setVenueListScrollTop(event.currentTarget.scrollTop);
+                setVenueListViewportHeight(event.currentTarget.clientHeight || 300);
+              }}
+            >
+              <div style={{ height: `${topSpacerHeight}px` }} />
+              <ul className="venue-list-virtual-items">
+              {virtualVenues.map((venue) => {
                 const clusterColor = getClusterColor(venue.clusterId);
                 const premiseVal = normalizePremiseValue(venue.premiseType);
+                const venueItemKey = `${venue.recordType || 'active'}:${venue.name || ''}:${venue.address || ''}`;
                 return (
-                  <li key={venue.name}>
+                  <li key={venueItemKey}>
                     <button
                       type="button"
                       onClick={() => handleVenueSelect(venue)}
@@ -472,7 +813,9 @@ function App() {
                   </li>
                 );
               })}
-            </ul>
+              </ul>
+              <div style={{ height: `${bottomSpacerHeight}px` }} />
+            </div>
             <div className="venue-list-close-wrap">
               <button
                 type="button"

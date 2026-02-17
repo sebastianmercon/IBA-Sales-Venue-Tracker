@@ -330,6 +330,41 @@
   background: rgba(212,160,23,0.06);
 }
 
+.venue-panel-edit-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.venue-panel-edit-input {
+  border: 1px solid var(--iba-warm-300, #DDD7CC);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.venue-panel-edit-input[type='textarea'],
+.venue-panel-edit-actions textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.venue-panel-edit-actions-row {
+  display: flex;
+  gap: 8px;
+}
+
+.venue-panel-edit-btn {
+  border: 1px solid var(--iba-warm-300, #DDD7CC);
+  border-radius: 8px;
+  padding: 7px 12px;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .venue-notes-card {
   border: 1px solid var(--iba-warm-200, #EDE8E0);
   border-radius: 10px;

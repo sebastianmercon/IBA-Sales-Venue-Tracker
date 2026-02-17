@@ -12,8 +12,10 @@ function getConfig() {
     sheetsId: process.env.GOOGLE_SHEETS_ID,
     mapsId: process.env.GOOGLE_MAPS_ID,
     pollingInterval: parseInt(process.env.POLLING_INTERVAL || '60', 10),
-    sheetName: process.env.SHEET_NAME || 'Sheet1',
+    sheetName: process.env.SHEET_NAME || 'WebApp Backend',
+    prospectSheetName: process.env.PROSPECT_SHEET_NAME || '',
     visitTimesSheetName: process.env.VISIT_TIMES_SHEET_NAME || 'Visit Times',
+    placesApiKey: process.env.GOOGLE_PLACES_API_KEY || '',
     projectId: process.env.GOOGLE_CLOUD_PROJECT,
     oauthSecretName: process.env.OAUTH_SECRET_NAME || 'sheets-maps-oauth-tokens',
   };
@@ -82,6 +84,48 @@ function getColumnMappings() {
 }
 
 /**
+ * Column mappings for the simplified prospect sheet.
+ * Default order:
+ * A=Venue Name, B=Address, C=Notes/Contact.
+ *
+ * Optional overrides (0-indexed):
+ * PROSPECT_COLUMN_VENUE_NAME_INDEX
+ * PROSPECT_COLUMN_ADDRESS_INDEX
+ * PROSPECT_COLUMN_NOTES_INDEX
+ */
+function getProspectColumnMappings() {
+  return {
+    VENUE_NAME: parseColumnIndex('PROSPECT_COLUMN_VENUE_NAME_INDEX', 0), // Column A
+    ADDRESS: parseColumnIndex('PROSPECT_COLUMN_ADDRESS_INDEX', 1), // Column B
+    NOTES: parseColumnIndex('PROSPECT_COLUMN_NOTES_INDEX', 2), // Column C
+    VISITED: -1,
+    CITY: -1,
+    STATE: -1,
+    ZIP: -1,
+    NEIGHBORHOOD: -1,
+    TIME_WINDOW_1_START: -1,
+    TIME_WINDOW_1_END: -1,
+    TIME_WINDOW_2_START: -1,
+    TIME_WINDOW_2_END: -1,
+    CONTACT_NAME: -1,
+    CONTACT_TITLE: -1,
+    CONTACT_PHONE: -1,
+    CONTACT_EMAIL: -1,
+    BEST_TIME: -1,
+    BEST_DAYS: -1,
+    LATITUDE: -1,
+    LONGITUDE: -1,
+    PRIORITY_TAG: -1,
+    CLUSTER_ID: -1,
+    PREMISE_TYPE: -1,
+    ASSIGNED_REP: -1,
+    VISIT_TIMES_NAME: -1,
+    VISIT_TIMES_BEST_TIME: -1,
+    VISIT_TIMES_BEST_DAYS: -1,
+  };
+}
+
+/**
  * My Maps color codes
  */
 const MAP_COLORS = {
@@ -92,5 +136,6 @@ const MAP_COLORS = {
 module.exports = {
   getConfig,
   getColumnMappings,
+  getProspectColumnMappings,
   MAP_COLORS,
 };

@@ -6,10 +6,15 @@ import './VenuePanel.css';
  * Venue Panel Component
  * Side panel displaying venue details and status toggle
  */
-function VenuePanel({ venue, onClose, onUpdate }) {
+function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate }) {
   const [visited, setVisited] = useState(venue?.visited || false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [editingContact, setEditingContact] = useState(false);
+  const [contactDraft, setContactDraft] = useState({
+    address: venue?.address || '',
+    notes: venue?.notes || '',
+  });
 
   const premiseInfo = (() => {
     const raw = String(venue?.premiseType || '').trim().toLowerCase().replace(/[-_\s]/g, '');
@@ -57,6 +62,11 @@ function VenuePanel({ venue, onClose, onUpdate }) {
     if (venue) {
       setVisited(venue.visited || false);
       setError(null);
+      setEditingContact(false);
+      setContactDraft({
+        address: venue?.address || '',
+        notes: venue?.notes || '',
+      });
     }
   }, [venue]);
 
@@ -70,8 +80,14 @@ function VenuePanel({ venue, onClose, onUpdate }) {
       // Optimistic UI update
       setVisited(newVisited);
 
-      // Update via API
-      const result = await updateVisitedStatus(venue.name, newVisited);
+      // Prospects are stored in Accounts (3 columns), so visited is persisted via prospect update.
+      let result;
+      if (isProspect && onProspectUpdate) {
+        await onProspectUpdate(venue.name, { visited: newVisited });
+        result = { venue: { name: venue.name, visited: newVisited } };
+      } else {
+        result = await updateVisitedStatus(venue.name, newVisited);
+      }
 
       // Notify parent to refresh data
       if (onUpdate) {
@@ -91,6 +107,27 @@ function VenuePanel({ venue, onClose, onUpdate }) {
   if (!venue) {
     return null;
   }
+
+  const isProspect = venue.recordType === 'prospect';
+
+  const handleContactSave = async () => {
+    if (!isProspect || !onProspectUpdate) {
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await onProspectUpdate(venue.name, contactDraft);
+      if (onUpdate) {
+        onUpdate({ ...venue, ...contactDraft });
+      }
+      setEditingContact(false);
+    } catch (err) {
+      setError('Failed to update contact details.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className={`venue-panel venue-panel--tone-${premiseInfo.tone}`}>
@@ -301,7 +338,7 @@ function VenuePanel({ venue, onClose, onUpdate }) {
           </div>
         </section>
 
-        {(venue.contactName || venue.contactTitle || venue.contactPhone || venue.contactEmail) && (
+        {(venue.contactName || venue.contactTitle || venue.contactPhone || venue.contactEmail || isProspect) && (
           <section className="venue-panel-group">
             <h3 className="venue-panel-group-title">Relationship</h3>
             <div className="venue-panel-section">
@@ -335,6 +372,42 @@ function VenuePanel({ venue, onClose, onUpdate }) {
               <div className="venue-panel-section">
                 <label className="venue-panel-label">Assigned Rep</label>
                 <div className="venue-panel-value">{venue.assignedRep}</div>
+              </div>
+            )}
+
+            {isProspect && (
+              <div className="venue-panel-section">
+                <div className="venue-panel-edit-actions">
+                  {!editingContact ? (
+                    <button type="button" className="venue-panel-edit-btn" onClick={() => setEditingContact(true)}>
+                      Edit account notes/contact
+                    </button>
+                  ) : (
+                    <>
+                      <input
+                        className="venue-panel-edit-input"
+                        type="text"
+                        placeholder="Address"
+                        value={contactDraft.address}
+                        onChange={(e) => setContactDraft((prev) => ({ ...prev, address: e.target.value }))}
+                      />
+                      <textarea
+                        className="venue-panel-edit-input"
+                        placeholder="Notes / Contact info"
+                        value={contactDraft.notes}
+                        onChange={(e) => setContactDraft((prev) => ({ ...prev, notes: e.target.value }))}
+                      />
+                      <div className="venue-panel-edit-actions-row">
+                        <button type="button" className="venue-panel-edit-btn" onClick={handleContactSave}>
+                          Save
+                        </button>
+                        <button type="button" className="venue-panel-edit-btn" onClick={() => setEditingContact(false)}>
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             )}
           </section>

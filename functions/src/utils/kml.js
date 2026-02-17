@@ -26,6 +26,20 @@ function normalizeArray(value) {
   return Array.isArray(value) ? value : [value];
 }
 
+function collectPlacemarks(container) {
+  const placemarks = [];
+  if (!container) {
+    return placemarks;
+  }
+
+  placemarks.push(...normalizeArray(container.Placemark));
+  for (const folder of normalizeArray(container.Folder)) {
+    placemarks.push(...collectPlacemarks(folder));
+  }
+
+  return placemarks;
+}
+
 function readText(value) {
   return value?.['#text'] || value || '';
 }
@@ -143,7 +157,7 @@ function parseKML(kmlContent) {
     
     // KML structure: kml > Document > Placemark[]
     const document = json.kml?.Document || json.kml?.Folder || {};
-    const placemarkArray = normalizeArray(document.Placemark);
+    const placemarkArray = collectPlacemarks(document);
 
     for (const placemark of placemarkArray) {
       const name = readText(placemark.name);
@@ -177,7 +191,7 @@ function parseKMLPolygons(kmlContent) {
   try {
     const json = parser.parse(kmlContent);
     const document = json.kml?.Document || json.kml?.Folder || {};
-    const placemarkArray = normalizeArray(document.Placemark);
+    const placemarkArray = collectPlacemarks(document);
     const polygons = [];
 
     for (const placemark of placemarkArray) {

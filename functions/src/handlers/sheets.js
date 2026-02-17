@@ -11,9 +11,10 @@
  */
 
 const { google } = require('googleapis');
-const { getColumnMappings, getConfig } = require('../utils/config');
+const { getColumnMappings, getProspectColumnMappings, getConfig } = require('../utils/config');
 
 const rowIndexCache = new Map();
+const COORDS_TOKEN_REGEX = /\[\[coords:\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]\]/i;
 
 function getColumnLetter(index) {
   if (index < 0) {
@@ -39,6 +40,50 @@ function getCellValue(row, index) {
     return '';
   }
   return row[index] || '';
+}
+
+function toFiniteNumber(value) {
+  const num = Number.parseFloat(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function parseCoordsFromNotes(notes) {
+  const text = String(notes || '');
+  const match = text.match(COORDS_TOKEN_REGEX);
+  if (!match) {
+    return null;
+  }
+  const latitude = toFiniteNumber(match[1]);
+  const longitude = toFiniteNumber(match[2]);
+  if (latitude === null || longitude === null) {
+    return null;
+  }
+  return { latitude, longitude };
+}
+
+function stripCoordsToken(notes) {
+  return String(notes || '').replace(COORDS_TOKEN_REGEX, '').trim();
+}
+
+function stripVisitedToken(notes) {
+  return String(notes || '').replace(/\[\[visited:\s*(true|false)\s*\]\]/ig, '').trim();
+}
+
+function upsertCoordsToken(notes, latitude, longitude) {
+  const cleaned = stripSystemTokens(notes);
+  const lat = toFiniteNumber(latitude);
+  const lng = toFiniteNumber(longitude);
+  if (lat === null || lng === null) {
+    return cleaned;
+  }
+  const token = `[[coords:${lat},${lng}]]`;
+  return cleaned ? `${cleaned}\n${token}` : token;
+}
+
+function stripSystemTokens(notes) {
+  const withoutCoords = stripCoordsToken(notes);
+  const withoutVisited = stripVisitedToken(withoutCoords);
+  return withoutVisited.trim();
 }
 
 function buildFullAddress(row, mappings) {
@@ -152,6 +197,75 @@ async function safeSheetName(sheets, sheetsId, sheetName) {
   }
 }
 
+function buildVenueFromRow(row, mappings, visitTimesByName, recordType, sourceSheetName) {
+  const name = getCellValue(row, mappings.VENUE_NAME).trim();
+  const visitTimes = visitTimesByName.get(normalizeKey(name)) || {};
+  const address = buildFullAddress(row, mappings) || getCellValue(row, mappings.ADDRESS);
+  const sourceKey = `${sourceSheetName || ''}:${name}`;
+  const id = normalizeKey(sourceKey);
+
+  const rawNotes = getCellValue(row, mappings.NOTES);
+  const coordsFromNotes = parseCoordsFromNotes(rawNotes);
+  const latFromColumn = toFiniteNumber(getCellValue(row, mappings.LATITUDE));
+  const lngFromColumn = toFiniteNumber(getCellValue(row, mappings.LONGITUDE));
+  const hasVisitedColumn = Number.isFinite(mappings.VISITED) && mappings.VISITED >= 0;
+  const visitedFromColumn = hasVisitedColumn
+    ? row[mappings.VISITED] === 'TRUE' || row[mappings.VISITED] === true
+    : null;
+
+  return {
+    id,
+    recordType,
+    sourceSheet: sourceSheetName,
+    name,
+    address,
+    latitude: latFromColumn ?? coordsFromNotes?.latitude ?? null,
+    longitude: lngFromColumn ?? coordsFromNotes?.longitude ?? null,
+    priorityTag: getCellValue(row, mappings.PRIORITY_TAG),
+    clusterId: getCellValue(row, mappings.CLUSTER_ID),
+    premiseType: getCellValue(row, mappings.PREMISE_TYPE),
+    assignedRep: getCellValue(row, mappings.ASSIGNED_REP),
+    neighborhood: getCellValue(row, mappings.NEIGHBORHOOD),
+    timeWindow1Start: getCellValue(row, mappings.TIME_WINDOW_1_START),
+    timeWindow1End: getCellValue(row, mappings.TIME_WINDOW_1_END),
+    timeWindow2Start: getCellValue(row, mappings.TIME_WINDOW_2_START),
+    timeWindow2End: getCellValue(row, mappings.TIME_WINDOW_2_END),
+    bestTimeToVisit: getCellValue(row, mappings.BEST_TIME) || visitTimes.bestTimeToVisit || '',
+    bestDaysToVisit: getCellValue(row, mappings.BEST_DAYS) || visitTimes.bestDaysToVisit || '',
+    contactName: getCellValue(row, mappings.CONTACT_NAME),
+    contactTitle: getCellValue(row, mappings.CONTACT_TITLE),
+    contactPhone: getCellValue(row, mappings.CONTACT_PHONE),
+    contactEmail: getCellValue(row, mappings.CONTACT_EMAIL),
+    notes: stripSystemTokens(rawNotes),
+    visited: typeof visitedFromColumn === 'boolean'
+      ? visitedFromColumn
+      : false,
+  };
+}
+
+async function readSheetVenues(sheets, auth, sheetsId, preferredSheetName, mappings, visitTimesByName, recordType) {
+  const resolvedSheetName = await safeSheetName(sheets, sheetsId, preferredSheetName);
+  const maxColumnIndex = getMaxColumnIndex(mappings);
+  const lastColumn = getColumnLetter(maxColumnIndex) || 'C';
+  const range = `${resolvedSheetName}!A2:${lastColumn}`;
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetsId,
+    range,
+  });
+  const rows = response.data.values || [];
+  setRowIndexCache(sheetsId, resolvedSheetName, mappings, rows);
+
+  const venues = [];
+  for (const row of rows) {
+    if (!row[mappings.VENUE_NAME]) {
+      continue;
+    }
+    venues.push(buildVenueFromRow(row, mappings, visitTimesByName, recordType, resolvedSheetName));
+  }
+
+  return venues;
+}
+
 /**
  * Read all venues from Google Sheets
  * Returns array of venue objects
@@ -159,118 +273,57 @@ async function safeSheetName(sheets, sheetsId, sheetName) {
 async function readVenues(auth, sheetsId, sheetName) {
   const sheets = google.sheets({ version: 'v4', auth });
   const COLUMN_MAPPINGS = getColumnMappings();
+  const PROSPECT_COLUMN_MAPPINGS = getProspectColumnMappings();
   const config = getConfig();
   
   try {
-    const resolvedSheetName = await safeSheetName(sheets, sheetsId, sheetName);
-    // Read all rows (skip header row)
-    const maxColumnIndex = getMaxColumnIndex(COLUMN_MAPPINGS);
-    const lastColumn = getColumnLetter(maxColumnIndex) || 'C';
-    const range = `${resolvedSheetName}!A2:${lastColumn}`;
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: sheetsId,
-      range,
-    });
-
-    const rows = response.data.values || [];
-    const venues = [];
-    setRowIndexCache(sheetsId, resolvedSheetName, COLUMN_MAPPINGS, rows);
     const visitTimesByName = await readVisitTimes(
       auth,
       sheetsId,
       config.visitTimesSheetName,
       COLUMN_MAPPINGS
     );
-
-    for (const row of rows) {
-      // Skip empty rows
-      if (!row[COLUMN_MAPPINGS.VENUE_NAME]) {
-        continue;
-      }
-
-      const name = getCellValue(row, COLUMN_MAPPINGS.VENUE_NAME).trim();
-      const visitTimes = visitTimesByName.get(normalizeKey(name)) || {};
-      const venue = {
-        name,
-        address: buildFullAddress(row, COLUMN_MAPPINGS) || getCellValue(row, COLUMN_MAPPINGS.ADDRESS),
-        latitude: getCellValue(row, COLUMN_MAPPINGS.LATITUDE) || null,
-        longitude: getCellValue(row, COLUMN_MAPPINGS.LONGITUDE) || null,
-        priorityTag: getCellValue(row, COLUMN_MAPPINGS.PRIORITY_TAG),
-        clusterId: getCellValue(row, COLUMN_MAPPINGS.CLUSTER_ID),
-        premiseType: getCellValue(row, COLUMN_MAPPINGS.PREMISE_TYPE),
-        assignedRep: getCellValue(row, COLUMN_MAPPINGS.ASSIGNED_REP),
-        neighborhood: getCellValue(row, COLUMN_MAPPINGS.NEIGHBORHOOD),
-        timeWindow1Start: getCellValue(row, COLUMN_MAPPINGS.TIME_WINDOW_1_START),
-        timeWindow1End: getCellValue(row, COLUMN_MAPPINGS.TIME_WINDOW_1_END),
-        timeWindow2Start: getCellValue(row, COLUMN_MAPPINGS.TIME_WINDOW_2_START),
-        timeWindow2End: getCellValue(row, COLUMN_MAPPINGS.TIME_WINDOW_2_END),
-        bestTimeToVisit: getCellValue(row, COLUMN_MAPPINGS.BEST_TIME) || visitTimes.bestTimeToVisit || '',
-        bestDaysToVisit: getCellValue(row, COLUMN_MAPPINGS.BEST_DAYS) || visitTimes.bestDaysToVisit || '',
-        contactName: getCellValue(row, COLUMN_MAPPINGS.CONTACT_NAME),
-        contactTitle: getCellValue(row, COLUMN_MAPPINGS.CONTACT_TITLE),
-        contactPhone: getCellValue(row, COLUMN_MAPPINGS.CONTACT_PHONE),
-        contactEmail: getCellValue(row, COLUMN_MAPPINGS.CONTACT_EMAIL),
-        notes: getCellValue(row, COLUMN_MAPPINGS.NOTES),
-        visited: row[COLUMN_MAPPINGS.VISITED] === 'TRUE' || row[COLUMN_MAPPINGS.VISITED] === true,
-      };
-
-      venues.push(venue);
+    const activeVenues = await readSheetVenues(
+      sheets,
+      auth,
+      sheetsId,
+      sheetName,
+      COLUMN_MAPPINGS,
+      visitTimesByName,
+      'active'
+    );
+    let prospectVenues = [];
+    if (config.prospectSheetName) {
+      prospectVenues = await readSheetVenues(
+        sheets,
+        auth,
+        sheetsId,
+        config.prospectSheetName,
+        PROSPECT_COLUMN_MAPPINGS,
+        new Map(),
+        'prospect'
+      );
     }
-
-    return venues;
+    return [...activeVenues, ...prospectVenues];
   } catch (error) {
     if (error.message?.includes('invalid_request')) {
       const fallbackSheetName = await resolveSheetName(sheets, sheetsId, sheetName);
-      const maxColumnIndex = getMaxColumnIndex(COLUMN_MAPPINGS);
-      const lastColumn = getColumnLetter(maxColumnIndex) || 'C';
-      const fallbackRange = `${fallbackSheetName}!A2:${lastColumn}`;
-      const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: sheetsId,
-        range: fallbackRange,
-      });
-      const rows = response.data.values || [];
-      const venues = [];
-      setRowIndexCache(sheetsId, fallbackSheetName, COLUMN_MAPPINGS, rows);
-      const visitTimesByName = await readVisitTimes(
-        auth,
-        sheetsId,
-        config.visitTimesSheetName,
-        COLUMN_MAPPINGS
-      );
-      for (const row of rows) {
-        if (!row[COLUMN_MAPPINGS.VENUE_NAME]) {
-          continue;
-        }
-        const name = getCellValue(row, COLUMN_MAPPINGS.VENUE_NAME).trim();
-        const visitTimes = visitTimesByName.get(normalizeKey(name)) || {};
-        const venue = {
-          name,
-          address: buildFullAddress(row, COLUMN_MAPPINGS) || getCellValue(row, COLUMN_MAPPINGS.ADDRESS),
-          latitude: getCellValue(row, COLUMN_MAPPINGS.LATITUDE) || null,
-          longitude: getCellValue(row, COLUMN_MAPPINGS.LONGITUDE) || null,
-          clusterId: getCellValue(row, COLUMN_MAPPINGS.CLUSTER_ID),
-          assignedRep: getCellValue(row, COLUMN_MAPPINGS.ASSIGNED_REP),
-          neighborhood: getCellValue(row, COLUMN_MAPPINGS.NEIGHBORHOOD),
-          timeWindow1Start: getCellValue(row, COLUMN_MAPPINGS.TIME_WINDOW_1_START),
-          timeWindow1End: getCellValue(row, COLUMN_MAPPINGS.TIME_WINDOW_1_END),
-          timeWindow2Start: getCellValue(row, COLUMN_MAPPINGS.TIME_WINDOW_2_START),
-          timeWindow2End: getCellValue(row, COLUMN_MAPPINGS.TIME_WINDOW_2_END),
-          bestTimeToVisit: getCellValue(row, COLUMN_MAPPINGS.BEST_TIME) || visitTimes.bestTimeToVisit || '',
-          bestDaysToVisit: getCellValue(row, COLUMN_MAPPINGS.BEST_DAYS) || visitTimes.bestDaysToVisit || '',
-          contactName: getCellValue(row, COLUMN_MAPPINGS.CONTACT_NAME),
-          contactTitle: getCellValue(row, COLUMN_MAPPINGS.CONTACT_TITLE),
-          contactPhone: getCellValue(row, COLUMN_MAPPINGS.CONTACT_PHONE),
-          contactEmail: getCellValue(row, COLUMN_MAPPINGS.CONTACT_EMAIL),
-          notes: getCellValue(row, COLUMN_MAPPINGS.NOTES),
-          visited: row[COLUMN_MAPPINGS.VISITED] === 'TRUE' || row[COLUMN_MAPPINGS.VISITED] === true,
-        };
-        venues.push(venue);
-      }
-      return venues;
+      return readVenues(auth, sheetsId, fallbackSheetName);
     }
     console.error('Error reading venues from Sheets:', error.message);
     throw new Error(`Failed to read venues from Google Sheets: ${error.message}`);
   }
+}
+
+async function getRowIndexByName(sheets, sheetsId, sheetName, venueName, mappings) {
+  const normalizedTarget = normalizeKey(venueName);
+  const cache = await ensureRowIndexCache(
+    sheets,
+    sheetsId,
+    sheetName,
+    mappings
+  );
+  return cache.get(normalizedTarget) || null;
 }
 
 /**
@@ -386,6 +439,148 @@ async function updateVenueCoordinates(auth, sheetsId, sheetName, venueName, lati
   }
 }
 
+async function createProspect(auth, sheetsId, prospectSheetName, payload) {
+  const sheets = google.sheets({ version: 'v4', auth });
+  const mappings = getProspectColumnMappings();
+  const resolvedSheetName = await safeSheetName(sheets, sheetsId, prospectSheetName);
+
+  const row = [];
+  row[mappings.VENUE_NAME] = String(payload.name || '').trim();
+  row[mappings.ADDRESS] = String(payload.address || '').trim();
+  row[mappings.VISITED] = payload.visited ? 'TRUE' : 'FALSE';
+  row[mappings.PREMISE_TYPE] = String(payload.premiseType || '').trim();
+  row[mappings.CONTACT_NAME] = String(payload.contactName || '').trim();
+  row[mappings.CONTACT_TITLE] = String(payload.contactTitle || '').trim();
+  row[mappings.CONTACT_PHONE] = String(payload.contactPhone || '').trim();
+  row[mappings.CONTACT_EMAIL] = String(payload.contactEmail || '').trim();
+  row[mappings.NOTES] = upsertCoordsToken(payload.notes, payload.latitude, payload.longitude);
+  row[mappings.ASSIGNED_REP] = String(payload.assignedRep || '').trim();
+
+  if (mappings.LATITUDE >= 0 && payload.latitude !== undefined && payload.latitude !== null) {
+    row[mappings.LATITUDE] = payload.latitude;
+  }
+  if (mappings.LONGITUDE >= 0 && payload.longitude !== undefined && payload.longitude !== null) {
+    row[mappings.LONGITUDE] = payload.longitude;
+  }
+
+  const maxColumnIndex = getMaxColumnIndex(mappings);
+  const normalizedRow = new Array(maxColumnIndex + 1).fill('');
+  row.forEach((value, index) => {
+    if (index >= 0) {
+      normalizedRow[index] = value ?? '';
+    }
+  });
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetsId,
+    range: `${resolvedSheetName}!A:A`,
+    valueInputOption: 'USER_ENTERED',
+    insertDataOption: 'INSERT_ROWS',
+    resource: {
+      values: [normalizedRow],
+    },
+  });
+
+  rowIndexCache.delete(getCacheKey(sheetsId, resolvedSheetName));
+  return { success: true, sheetName: resolvedSheetName };
+}
+
+async function updateProspect(auth, sheetsId, prospectSheetName, identifier, payload) {
+  const sheets = google.sheets({ version: 'v4', auth });
+  const mappings = getProspectColumnMappings();
+  const resolvedSheetName = await safeSheetName(sheets, sheetsId, prospectSheetName);
+  const targetName = String(identifier || payload.name || '').trim();
+  if (!targetName) {
+    throw new Error('Prospect name is required for updates');
+  }
+
+  const rowIndex = await getRowIndexByName(
+    sheets,
+    sheetsId,
+    resolvedSheetName,
+    targetName,
+    mappings
+  );
+  if (!rowIndex) {
+    throw new Error(`Prospect "${targetName}" not found`);
+  }
+
+  const updates = [];
+  const hasCoordinatePayload =
+    payload.latitude !== undefined &&
+    payload.longitude !== undefined &&
+    toFiniteNumber(payload.latitude) !== null &&
+    toFiniteNumber(payload.longitude) !== null;
+  const setField = (columnIndex, key) => {
+    if (!Number.isFinite(columnIndex) || columnIndex < 0 || !(key in payload)) {
+      return;
+    }
+    const col = getColumnLetter(columnIndex);
+    if (!col) return;
+    updates.push({
+      range: `${resolvedSheetName}!${col}${rowIndex}`,
+      values: [[payload[key] ?? '']],
+    });
+  };
+
+  setField(mappings.VENUE_NAME, 'name');
+  setField(mappings.ADDRESS, 'address');
+  if ('visited' in payload && Number.isFinite(mappings.VISITED) && mappings.VISITED >= 0) {
+    const visitedCol = getColumnLetter(mappings.VISITED);
+    if (visitedCol) {
+      updates.push({
+        range: `${resolvedSheetName}!${visitedCol}${rowIndex}`,
+        values: [[payload.visited ? 'TRUE' : 'FALSE']],
+      });
+    }
+  }
+  setField(mappings.PREMISE_TYPE, 'premiseType');
+  setField(mappings.CONTACT_NAME, 'contactName');
+  setField(mappings.CONTACT_TITLE, 'contactTitle');
+  setField(mappings.CONTACT_PHONE, 'contactPhone');
+  setField(mappings.CONTACT_EMAIL, 'contactEmail');
+  if ('notes' in payload || hasCoordinatePayload) {
+    let baseNotes = '';
+    if ('notes' in payload) {
+      baseNotes = String(payload.notes || '');
+    } else if (Number.isFinite(mappings.NOTES) && mappings.NOTES >= 0) {
+      const notesCol = getColumnLetter(mappings.NOTES);
+      if (notesCol) {
+        const notesResp = await sheets.spreadsheets.values.get({
+          spreadsheetId: sheetsId,
+          range: `${resolvedSheetName}!${notesCol}${rowIndex}`,
+        });
+        baseNotes = notesResp?.data?.values?.[0]?.[0] || '';
+      }
+    }
+    const notesWithCoords = upsertCoordsToken(baseNotes, payload.latitude, payload.longitude);
+    const notesCol = getColumnLetter(mappings.NOTES);
+    if (notesCol) {
+      updates.push({
+        range: `${resolvedSheetName}!${notesCol}${rowIndex}`,
+        values: [[notesWithCoords]],
+      });
+    }
+  }
+  setField(mappings.ASSIGNED_REP, 'assignedRep');
+  setField(mappings.LATITUDE, 'latitude');
+  setField(mappings.LONGITUDE, 'longitude');
+
+  if (updates.length === 0) {
+    return { success: true, rowIndex, updated: 0 };
+  }
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: sheetsId,
+    resource: {
+      valueInputOption: 'USER_ENTERED',
+      data: updates,
+    },
+  });
+  rowIndexCache.delete(getCacheKey(sheetsId, resolvedSheetName));
+  return { success: true, rowIndex, updated: updates.length };
+}
+
 /**
  * Apply conditional formatting to Visited column
  * Green for TRUE, red for FALSE
@@ -481,4 +676,6 @@ module.exports = {
   readVenues,
   updateVisitedStatus,
   updateVenueCoordinates,
+  createProspect,
+  updateProspect,
 };

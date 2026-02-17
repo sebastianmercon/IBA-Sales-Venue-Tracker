@@ -66,3 +66,50 @@
   box-shadow: 0 4px 16px rgba(212,160,23,0.15);
   color: var(--iba-gold, #D4A017);
 }
+
+.map-add-button,
+.map-poi-toggle {
+  position: absolute;
+  right: 12px;
+  z-index: 6;
+  border: 1px solid var(--iba-warm-200, #EDE8E0);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  color: var(--iba-charcoal, #161616);
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(22, 22, 22, 0.1);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.map-add-button {
+  top: 60px;
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.map-poi-toggle {
+  top: 108px;
+  min-width: 54px;
+  height: 34px;
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.map-add-button:hover,
+.map-poi-toggle:hover {
+  background: var(--iba-warm-100, #FAF8F4);
+  border-color: var(--iba-gold, #D4A017);
+}
+
+.map-add-button--active,
+.map-poi-toggle--active {
+  background: var(--iba-gold, #D4A017);
+  border-color: var(--iba-gold, #D4A017);
+  color: #161616;
+}

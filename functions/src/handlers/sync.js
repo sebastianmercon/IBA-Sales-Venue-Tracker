@@ -21,19 +21,20 @@ async function syncSheetsToMaps(auth, sheetsId, sheetName, mapsFileId) {
   try {
     // Read venues from Sheets (source of truth)
     const venues = await readVenues(auth, sheetsId, sheetName);
+    const activeVenues = venues.filter((venue) => venue.recordType !== 'prospect');
     
-    if (venues.length === 0) {
+    if (activeVenues.length === 0) {
       console.warn('No venues found in Sheets');
       return { success: true, synced: 0, message: 'No venues to sync' };
     }
 
     // Sync to My Maps
     // Note: My Maps updates may be delayed - eventual consistency is expected
-    const result = await syncVenuesToMaps(auth, mapsFileId, venues);
+    const result = await syncVenuesToMaps(auth, mapsFileId, activeVenues);
 
     return {
       success: true,
-      synced: venues.length,
+      synced: activeVenues.length,
       timestamp: new Date().toISOString(),
     };
   } catch (error) {

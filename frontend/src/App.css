@@ -552,10 +552,23 @@
   padding: 14px;
   max-width: 340px;
   max-height: 440px;
-  overflow-y: auto;
+  overflow: hidden;
   box-shadow: 0 10px 32px rgba(22, 22, 22, 0.12);
   z-index: 999;
   font-size: 13px;
+}
+
+.venue-list-virtual-scroll {
+  max-height: 300px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 6px;
+}
+
+.venue-list-virtual-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .app-venue-list summary {
@@ -748,4 +761,89 @@
   font-size: 11px;
   font-weight: 700;
   color: #ffffff;
+}
+
+.prospect-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 1800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.prospect-modal-card {
+  width: min(620px, 100%);
+  background: #fff;
+  border-radius: 14px;
+  padding: 18px;
+  border: 1px solid var(--iba-warm-200);
+  box-shadow: 0 18px 40px rgba(22, 22, 22, 0.2);
+}
+
+.prospect-modal-card h3 {
+  margin: 0;
+}
+
+.prospect-modal-card p {
+  margin: 6px 0 12px;
+  color: var(--iba-warm-500);
+  font-size: 13px;
+}
+
+.prospect-modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.prospect-modal-grid input,
+.prospect-modal-grid select,
+.prospect-modal-grid textarea {
+  border: 1px solid var(--iba-warm-300);
+  border-radius: 8px;
+  padding: 9px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.prospect-modal-grid textarea {
+  grid-column: 1 / -1;
+  min-height: 84px;
+  resize: vertical;
+}
+
+.prospect-enrichment-hint {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #1E3A5F;
+  background: rgba(30,58,95,0.06);
+  border: 1px solid rgba(30,58,95,0.2);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.prospect-form-error {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #b24816;
+}
+
+.prospect-modal-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.prospect-modal-actions button {
+  border: 1px solid var(--iba-warm-300);
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
 }
