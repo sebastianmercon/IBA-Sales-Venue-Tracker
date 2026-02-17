@@ -6,7 +6,7 @@ import './VenuePanel.css';
  * Venue Panel Component
  * Side panel displaying venue details and status toggle
  */
-function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate }) {
+function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate, onDeleteVenue }) {
   const [visited, setVisited] = useState(venue?.visited || false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -124,6 +124,29 @@ function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate }) {
       setEditingContact(false);
     } catch (err) {
       setError('Failed to update contact details.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!onDeleteVenue || !venue?.name) {
+      return;
+    }
+    const confirmDelete = window.confirm(`Delete "${venue.name}" from the tracker?`);
+    if (!confirmDelete) {
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await onDeleteVenue(venue);
+      if (onClose) {
+        onClose();
+      }
+    } catch (err) {
+      const serverMessage = err?.response?.data?.error;
+      setError(serverMessage || 'Failed to delete venue. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -424,6 +447,19 @@ function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate }) {
 
         {error && (
           <div className="venue-panel-error">{error}</div>
+        )}
+
+        {onDeleteVenue && (
+          <div className="venue-panel-danger-zone">
+            <button
+              type="button"
+              className="venue-panel-delete-btn"
+              onClick={handleDelete}
+              disabled={loading}
+            >
+              Delete Venue
+            </button>
+          </div>
         )}
 
         {loading && (

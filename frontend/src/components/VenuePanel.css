@@ -234,6 +234,34 @@
   margin-top: 16px;
 }
 
+.venue-panel-danger-zone {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--iba-warm-300, #DDD7CC);
+}
+
+.venue-panel-delete-btn {
+  width: 100%;
+  border: 1px solid rgba(185, 28, 28, 0.35);
+  background: rgba(185, 28, 28, 0.08);
+  color: #991b1b;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.venue-panel-delete-btn:hover:not(:disabled) {
+  background: rgba(185, 28, 28, 0.15);
+}
+
+.venue-panel-delete-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* Cluster badge */
 .cluster-badge {
   display: inline-flex;

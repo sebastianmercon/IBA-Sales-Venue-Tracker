@@ -99,6 +99,26 @@ export async function updateProspect(identifier, payload) {
   }
 }
 
+export async function deleteProspect(identifier) {
+  try {
+    const response = await api.delete(`/api/prospects/${encodeURIComponent(identifier)}`);
+    return response.data;
+  } catch (error) {
+    console.error('Error deleting prospect:', error);
+    throw error;
+  }
+}
+
+export async function deleteVenue(venueName) {
+  try {
+    const response = await api.delete(`/api/venues/${encodeURIComponent(venueName)}`);
+    return response.data;
+  } catch (error) {
+    console.error('Error deleting venue:', error);
+    throw error;
+  }
+}
+
 /**
  * Trigger manual sync
  */

@@ -49,6 +49,9 @@ const {
   updateVenueCoordinates,
   createProspect,
   updateProspect,
+  deleteVenue,
+  deleteProspect,
+  cleanupProspectNotesTokens,
 } = require('./handlers/sheets');
 const { syncVenuesToMaps, updatePlacemarkColor, readMyMapsPolygons } = require('./handlers/maps');
 const { syncSheetsToMaps, getSyncStatus } = require('./handlers/sync');
@@ -138,6 +141,20 @@ const syncHandler = async (req, res) => {
         return res.status(201).json({ success: true, result });
       }
 
+      if (method === 'POST' && path === '/api/prospects/cleanup-notes') {
+        if (!config.prospectSheetName) {
+          return res.status(500).json({ error: 'PROSPECT_SHEET_NAME is not configured' });
+        }
+        const auth = await getAuth(config);
+        const result = await cleanupProspectNotesTokens(
+          auth,
+          config.sheetsId,
+          config.prospectSheetName
+        );
+        cache.invalidate('venues');
+        return res.status(200).json({ success: true, result });
+      }
+
       if ((method === 'PATCH' || method === 'POST') && path.startsWith('/api/prospects/')) {
         if (!config.prospectSheetName) {
           return res.status(500).json({ error: 'PROSPECT_SHEET_NAME is not configured' });
@@ -151,6 +168,25 @@ const syncHandler = async (req, res) => {
           config.prospectSheetName,
           identifier,
           payload
+        );
+        cache.invalidate('venues');
+        return res.status(200).json({ success: true, result });
+      }
+
+      if (method === 'DELETE' && path.startsWith('/api/prospects/')) {
+        if (!config.prospectSheetName) {
+          return res.status(500).json({ error: 'PROSPECT_SHEET_NAME is not configured' });
+        }
+        const identifier = decodeURIComponent(path.replace('/api/prospects/', ''));
+        if (!identifier) {
+          return res.status(400).json({ error: 'prospect identifier is required' });
+        }
+        const auth = await getAuth(config);
+        const result = await deleteProspect(
+          auth,
+          config.sheetsId,
+          config.prospectSheetName,
+          identifier
         );
         cache.invalidate('venues');
         return res.status(200).json({ success: true, result });
@@ -207,6 +243,22 @@ const syncHandler = async (req, res) => {
           console.warn('My Maps update failed (background):', mapsError.message);
         });
         return;
+      }
+
+      if (method === 'DELETE' && path.startsWith('/api/venues/')) {
+        const venueName = decodeURIComponent(path.replace('/api/venues/', ''));
+        if (!venueName) {
+          return res.status(400).json({ error: 'venue name is required' });
+        }
+        const auth = await getAuth(config);
+        const result = await deleteVenue(
+          auth,
+          config.sheetsId,
+          config.sheetName,
+          venueName
+        );
+        cache.invalidate('venues');
+        return res.status(200).json({ success: true, result });
       }
 
       // Trigger manual sync

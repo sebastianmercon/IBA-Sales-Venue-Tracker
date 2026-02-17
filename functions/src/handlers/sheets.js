@@ -69,17 +69,6 @@ function stripVisitedToken(notes) {
   return String(notes || '').replace(/\[\[visited:\s*(true|false)\s*\]\]/ig, '').trim();
 }
 
-function upsertCoordsToken(notes, latitude, longitude) {
-  const cleaned = stripSystemTokens(notes);
-  const lat = toFiniteNumber(latitude);
-  const lng = toFiniteNumber(longitude);
-  if (lat === null || lng === null) {
-    return cleaned;
-  }
-  const token = `[[coords:${lat},${lng}]]`;
-  return cleaned ? `${cleaned}\n${token}` : token;
-}
-
 function stripSystemTokens(notes) {
   const withoutCoords = stripCoordsToken(notes);
   const withoutVisited = stripVisitedToken(withoutCoords);
@@ -453,7 +442,7 @@ async function createProspect(auth, sheetsId, prospectSheetName, payload) {
   row[mappings.CONTACT_TITLE] = String(payload.contactTitle || '').trim();
   row[mappings.CONTACT_PHONE] = String(payload.contactPhone || '').trim();
   row[mappings.CONTACT_EMAIL] = String(payload.contactEmail || '').trim();
-  row[mappings.NOTES] = upsertCoordsToken(payload.notes, payload.latitude, payload.longitude);
+  row[mappings.NOTES] = stripSystemTokens(payload.notes);
   row[mappings.ASSIGNED_REP] = String(payload.assignedRep || '').trim();
 
   if (mappings.LATITUDE >= 0 && payload.latitude !== undefined && payload.latitude !== null) {
@@ -506,11 +495,6 @@ async function updateProspect(auth, sheetsId, prospectSheetName, identifier, pay
   }
 
   const updates = [];
-  const hasCoordinatePayload =
-    payload.latitude !== undefined &&
-    payload.longitude !== undefined &&
-    toFiniteNumber(payload.latitude) !== null &&
-    toFiniteNumber(payload.longitude) !== null;
   const setField = (columnIndex, key) => {
     if (!Number.isFinite(columnIndex) || columnIndex < 0 || !(key in payload)) {
       return;
@@ -539,7 +523,7 @@ async function updateProspect(auth, sheetsId, prospectSheetName, identifier, pay
   setField(mappings.CONTACT_TITLE, 'contactTitle');
   setField(mappings.CONTACT_PHONE, 'contactPhone');
   setField(mappings.CONTACT_EMAIL, 'contactEmail');
-  if ('notes' in payload || hasCoordinatePayload) {
+  if ('notes' in payload) {
     let baseNotes = '';
     if ('notes' in payload) {
       baseNotes = String(payload.notes || '');
@@ -553,7 +537,7 @@ async function updateProspect(auth, sheetsId, prospectSheetName, identifier, pay
         baseNotes = notesResp?.data?.values?.[0]?.[0] || '';
       }
     }
-    const notesWithCoords = upsertCoordsToken(baseNotes, payload.latitude, payload.longitude);
+    const notesWithCoords = stripSystemTokens(baseNotes);
     const notesCol = getColumnLetter(mappings.NOTES);
     if (notesCol) {
       updates.push({
@@ -579,6 +563,108 @@ async function updateProspect(auth, sheetsId, prospectSheetName, identifier, pay
   });
   rowIndexCache.delete(getCacheKey(sheetsId, resolvedSheetName));
   return { success: true, rowIndex, updated: updates.length };
+}
+
+async function deleteRowByVenueName(auth, sheetsId, preferredSheetName, venueName, mappings) {
+  const sheets = google.sheets({ version: 'v4', auth });
+  const resolvedSheetName = await safeSheetName(sheets, sheetsId, preferredSheetName);
+  const rowIndex = await getRowIndexByName(
+    sheets,
+    sheetsId,
+    resolvedSheetName,
+    venueName,
+    mappings
+  );
+  if (!rowIndex) {
+    throw new Error(`Venue "${venueName}" not found`);
+  }
+
+  const spreadsheet = await sheets.spreadsheets.get({
+    spreadsheetId: sheetsId,
+  });
+  const targetSheet = (spreadsheet.data.sheets || []).find(
+    (sheet) => sheet.properties?.title === resolvedSheetName
+  );
+  if (!targetSheet?.properties?.sheetId) {
+    throw new Error(`Sheet "${resolvedSheetName}" not found`);
+  }
+
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: sheetsId,
+    resource: {
+      requests: [
+        {
+          deleteDimension: {
+            range: {
+              sheetId: targetSheet.properties.sheetId,
+              dimension: 'ROWS',
+              startIndex: rowIndex - 1,
+              endIndex: rowIndex,
+            },
+          },
+        },
+      ],
+    },
+  });
+
+  rowIndexCache.delete(getCacheKey(sheetsId, resolvedSheetName));
+  return { success: true, rowIndex, sheetName: resolvedSheetName };
+}
+
+async function deleteVenue(auth, sheetsId, sheetName, venueName) {
+  const mappings = getColumnMappings();
+  return deleteRowByVenueName(auth, sheetsId, sheetName, venueName, mappings);
+}
+
+async function deleteProspect(auth, sheetsId, prospectSheetName, venueName) {
+  const mappings = getProspectColumnMappings();
+  return deleteRowByVenueName(auth, sheetsId, prospectSheetName, venueName, mappings);
+}
+
+async function cleanupProspectNotesTokens(auth, sheetsId, prospectSheetName) {
+  const sheets = google.sheets({ version: 'v4', auth });
+  const mappings = getProspectColumnMappings();
+  const resolvedSheetName = await safeSheetName(sheets, sheetsId, prospectSheetName);
+  const notesCol = getColumnLetter(mappings.NOTES);
+  if (!notesCol) {
+    return { success: true, sheetName: resolvedSheetName, scanned: 0, updated: 0 };
+  }
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetsId,
+    range: `${resolvedSheetName}!${notesCol}2:${notesCol}`,
+  });
+  const rows = response.data.values || [];
+  const updates = [];
+
+  rows.forEach((row, idx) => {
+    const original = String(row?.[0] || '');
+    const cleaned = stripSystemTokens(original);
+    if (cleaned !== original) {
+      updates.push({
+        range: `${resolvedSheetName}!${notesCol}${idx + 2}`,
+        values: [[cleaned]],
+      });
+    }
+  });
+
+  if (updates.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: sheetsId,
+      resource: {
+        valueInputOption: 'USER_ENTERED',
+        data: updates,
+      },
+    });
+  }
+
+  rowIndexCache.delete(getCacheKey(sheetsId, resolvedSheetName));
+  return {
+    success: true,
+    sheetName: resolvedSheetName,
+    scanned: rows.length,
+    updated: updates.length,
+  };
 }
 
 /**
@@ -678,4 +764,7 @@ module.exports = {
   updateVenueCoordinates,
   createProspect,
   updateProspect,
+  deleteVenue,
+  deleteProspect,
+  cleanupProspectNotesTokens,
 };

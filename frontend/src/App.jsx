@@ -2,7 +2,15 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import MapViewer from './components/MapViewer';
 import VenuePanel from './components/VenuePanel';
 import PollingService from './services/polling';
-import { createProspect, enrichProspect, getClusterPolygons, getVenues, updateProspect } from './services/api';
+import {
+  createProspect,
+  deleteProspect,
+  deleteVenue,
+  enrichProspect,
+  getClusterPolygons,
+  getVenues,
+  updateProspect,
+} from './services/api';
 import './App.css';
 
 // Sky-phase palette — inspired by the Oaxacan sky from dawn to midnight
@@ -317,6 +325,58 @@ function App() {
     }
   };
 
+  const runClientGeocodeFallback = useCallback(async (venueName) => {
+    const query = String(venueName || '').trim();
+    if (!query || typeof window === 'undefined' || !window.google?.maps?.Geocoder) {
+      return [];
+    }
+    const geocoder = new window.google.maps.Geocoder();
+    const result = await new Promise((resolve) => {
+      geocoder.geocode({ address: `${query}, Miami` }, (results, status) => {
+        if (status === 'OK' && Array.isArray(results) && results.length > 0) {
+          resolve(results[0]);
+          return;
+        }
+        resolve(null);
+      });
+    });
+    if (!result?.geometry?.location) {
+      return [];
+    }
+    return [{
+      venueName: query,
+      address: result.formatted_address || '',
+      contactPhone: '',
+      website: '',
+      latitude: result.geometry.location.lat(),
+      longitude: result.geometry.location.lng(),
+    }];
+  }, []);
+
+  const runReverseGeocodeFromMarker = useCallback(async (latitude, longitude) => {
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng) ||
+      typeof window === 'undefined' ||
+      !window.google?.maps?.Geocoder
+    ) {
+      return '';
+    }
+    const geocoder = new window.google.maps.Geocoder();
+    const result = await new Promise((resolve) => {
+      geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+        if (status === 'OK' && Array.isArray(results) && results.length > 0) {
+          resolve(results[0]);
+          return;
+        }
+        resolve(null);
+      });
+    });
+    return result?.formatted_address || '';
+  }, []);
+
   const handleRunEnrichment = async () => {
     if (!prospectDraft.name.trim()) {
       setProspectFormError('Add a venue name before enrichment.');
@@ -325,19 +385,32 @@ function App() {
     setProspectFormLoading(true);
     setProspectFormError(null);
     try {
-      const result = await enrichProspect(
-        prospectDraft.name,
-        prospectDraft.latitude,
-        prospectDraft.longitude
-      );
-      const suggestions = result?.suggestions || [];
+      let reverseAddress = '';
+      if (Number.isFinite(prospectDraft.latitude) && Number.isFinite(prospectDraft.longitude)) {
+        reverseAddress = await runReverseGeocodeFromMarker(
+          prospectDraft.latitude,
+          prospectDraft.longitude
+        );
+      }
+      let suggestions = [];
+      try {
+        const result = await enrichProspect(
+          prospectDraft.name,
+          prospectDraft.latitude,
+          prospectDraft.longitude
+        );
+        suggestions = result?.suggestions || [];
+      } catch (error) {
+        suggestions = await runClientGeocodeFallback(prospectDraft.name);
+      }
       setEnrichmentSuggestions(suggestions);
       if (suggestions.length > 0) {
         const top = suggestions[0];
         setProspectDraft((prev) => ({
           ...prev,
           name: top.venueName || prev.name,
-          address: top.address || prev.address,
+          // Prefer exact reverse-geocoded pin address over generic search address.
+          address: reverseAddress || top.address || prev.address,
           notes: [
             prev.notes,
             top.contactPhone ? `Phone: ${top.contactPhone}` : '',
@@ -349,6 +422,13 @@ function App() {
           latitude: Number.isFinite(top.latitude) ? top.latitude : prev.latitude,
           longitude: Number.isFinite(top.longitude) ? top.longitude : prev.longitude,
         }));
+      } else if (reverseAddress) {
+        setProspectDraft((prev) => ({
+          ...prev,
+          address: reverseAddress,
+        }));
+      } else {
+        setProspectFormError('No enrichment match found. You can still save manually.');
       }
     } catch (err) {
       setProspectFormError('Enrichment failed. You can still save manually.');
@@ -382,6 +462,48 @@ function App() {
     }
     if (selectedVenue?.name === identifier) {
       setSelectedVenue((prev) => ({ ...prev, ...payload }));
+    }
+  };
+
+  const handleDeleteVenue = async (venue) => {
+    if (!venue?.name) {
+      return;
+    }
+    const isProspect = venue.recordType === 'prospect';
+    try {
+      if (isProspect) {
+        await deleteProspect(venue.name);
+      } else {
+        await deleteVenue(venue.name);
+      }
+    } catch (primaryError) {
+      const status = primaryError?.response?.status;
+      // Fallback: if record type is stale/mismatched, try deleting from the other sheet.
+      if (status === 404 || status === 400) {
+        if (isProspect) {
+          await deleteVenue(venue.name);
+        } else {
+          await deleteProspect(venue.name);
+        }
+      } else {
+        throw primaryError;
+      }
+    }
+
+    const key = normalizeName(venue.name);
+    setProspectVisitedOverrides((prev) => {
+      if (!(key in prev)) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setVenues((prev) => prev.filter((item) => normalizeName(item.name) !== normalizeName(venue.name)));
+    setSelectedVenue(null);
+    await loadVenues();
+    if (pollingServiceRef.current) {
+      pollingServiceRef.current.pollNow();
     }
   };
 
@@ -710,6 +832,7 @@ function App() {
             onClose={handleClosePanel}
             onUpdate={handleVenueUpdate}
             onProspectUpdate={handleProspectPanelUpdate}
+            onDeleteVenue={handleDeleteVenue}
           />
         )}
       </div>
