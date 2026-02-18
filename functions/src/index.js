@@ -64,6 +64,21 @@ const {
 
 const VENUES_CACHE_TTL = 30_000;   // 30 seconds
 const CLUSTERS_CACHE_TTL = 300_000; // 5 minutes (polygons rarely change)
+const DUPLICATE_CACHE_TTL = 60_000; // 60 seconds
+
+function normalizeCacheKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isSheetsQuotaError(error) {
+  const message = String(error?.message || error?.response?.data?.error || '').toLowerCase();
+  return (
+    message.includes('quota exceeded') ||
+    message.includes('rate limit') ||
+    message.includes('too many requests') ||
+    message.includes('per minute per user')
+  );
+}
 
 /**
  * Main Cloud Function handler
@@ -111,7 +126,14 @@ const syncHandler = async (req, res) => {
           return sendJson(req, res, 200, cached);
         }
         const auth = await getAuth(config);
-        await runDualSyncIfDue(auth, config.sheetsId, config.sheetName, config.prospectSheetName);
+        try {
+          await runDualSyncIfDue(auth, config.sheetsId, config.sheetName, config.prospectSheetName);
+        } catch (syncError) {
+          if (!isSheetsQuotaError(syncError)) {
+            throw syncError;
+          }
+          console.warn('Skipping due dual-sync because Sheets quota is currently saturated.');
+        }
         const status = await getSyncStatus(auth, config.sheetsId, config.sheetName);
         cache.set('venues', status, VENUES_CACHE_TTL);
         return sendJson(req, res, 200, status);
@@ -122,15 +144,37 @@ const syncHandler = async (req, res) => {
         if (!venueName || !String(venueName).trim()) {
           return res.status(400).json({ error: 'venueName is required' });
         }
+        const normalizedName = normalizeCacheKey(venueName);
+        const duplicateCacheKey = `dup:${normalizedName}`;
+        const cached = cache.get(duplicateCacheKey);
+        if (cached) {
+          return res.status(200).json(cached);
+        }
         const auth = await getAuth(config);
-        const result = await checkVenueDuplicates(
-          auth,
-          config.sheetsId,
-          config.sheetName,
-          config.prospectSheetName,
-          venueName
-        );
-        return res.status(200).json(result);
+        try {
+          const result = await checkVenueDuplicates(
+            auth,
+            config.sheetsId,
+            config.sheetName,
+            config.prospectSheetName,
+            venueName
+          );
+          cache.set(duplicateCacheKey, result, DUPLICATE_CACHE_TTL);
+          return res.status(200).json(result);
+        } catch (error) {
+          if (!isSheetsQuotaError(error)) {
+            throw error;
+          }
+          const degradedResult = {
+            success: true,
+            degraded: true,
+            reason: 'duplicate-check temporarily unavailable due to Sheets read quota',
+            exactMatches: [],
+            uncertainCandidates: [],
+            confidentCandidate: null,
+          };
+          return res.status(200).json(degradedResult);
+        }
       }
 
       if (method === 'POST' && path === '/api/venues/dual-sync') {
@@ -187,13 +231,6 @@ const syncHandler = async (req, res) => {
         }
         const auth = await getAuth(config);
         const result = await createProspect(auth, config.sheetsId, config.prospectSheetName, payload);
-        await runDualSyncIfDue(
-          auth,
-          config.sheetsId,
-          config.sheetName,
-          config.prospectSheetName,
-          { force: true }
-        );
         cache.invalidate('venues');
         return res.status(201).json({ success: true, result });
       }
