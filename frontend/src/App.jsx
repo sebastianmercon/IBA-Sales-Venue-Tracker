@@ -38,8 +38,8 @@ function getClusterColor(clusterId) {
 
 /**
  * Main App Component
- * 
- * Design Decision: Polling every 60 seconds
+ *
+ * Design Decision: Polling every 120 seconds
  * Immediate UI updates after user actions, full consistency via polling
  */
 function App() {
@@ -150,7 +150,7 @@ function App() {
   // Load venues + clusters in parallel on mount, then start polling.
   useEffect(() => {
     let canceled = false;
-    const pollingInterval = 60000; // 60 seconds
+    const pollingInterval = 120000; // 120 seconds
 
     pollingServiceRef.current = new PollingService(
       (updatedVenues, timestamp) => {
@@ -307,14 +307,28 @@ function App() {
     setProspectFormError(null);
     try {
       if (!options.forceCreate) {
-        const duplicateResult = await checkVenueDuplicates(prospectDraft.name);
-        const hasConflicts =
-          (duplicateResult?.exactMatches?.length || 0) > 0 ||
-          (duplicateResult?.uncertainCandidates?.length || 0) > 0;
-        if (hasConflicts) {
-          setDuplicateCheckResult(duplicateResult);
-          setProspectFormLoading(false);
-          return;
+        try {
+          const duplicateResult = await checkVenueDuplicates(prospectDraft.name);
+          const hasConflicts =
+            (duplicateResult?.exactMatches?.length || 0) > 0 ||
+            (duplicateResult?.uncertainCandidates?.length || 0) > 0;
+          if (hasConflicts) {
+            setDuplicateCheckResult(duplicateResult);
+            setProspectFormLoading(false);
+            return;
+          }
+        } catch (duplicateErr) {
+          const duplicateMessage = String(
+            duplicateErr?.response?.data?.error || duplicateErr?.message || ''
+          ).toLowerCase();
+          const isQuotaIssue =
+            duplicateMessage.includes('quota exceeded') ||
+            duplicateMessage.includes('rate limit') ||
+            duplicateMessage.includes('too many requests') ||
+            duplicateMessage.includes('per minute per user');
+          if (!isQuotaIssue) {
+            throw duplicateErr;
+          }
         }
       }
 

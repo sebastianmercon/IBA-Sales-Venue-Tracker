@@ -1,13 +1,13 @@
 /**
  * Polling service for syncing venue data
  * 
- * Design Decision: Poll every 60 seconds (configurable)
+ * Design Decision: Poll every 120 seconds (configurable)
  * Immediate UI updates after user actions, full consistency via polling
  */
 
 import { getVenues } from './api';
 
-const DEFAULT_POLLING_INTERVAL = 60000; // 60 seconds
+const DEFAULT_POLLING_INTERVAL = 120000; // 120 seconds
 
 class PollingService {
   constructor(onUpdate, interval = DEFAULT_POLLING_INTERVAL) {
