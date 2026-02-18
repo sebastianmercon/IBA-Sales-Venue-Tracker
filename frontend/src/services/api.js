@@ -10,7 +10,37 @@ import axios from 'axios';
 // Cloud Functions base URL - set via environment variable or default
 // Default uses the current host so LAN access "just works" on phones.
 const fallbackHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || `http://${fallbackHost}:9090`;
+
+function isLocalHostname(hostname) {
+  const value = String(hostname || '').toLowerCase();
+  return value === 'localhost' || value === '127.0.0.1' || value === '0.0.0.0';
+}
+
+function resolveApiBaseUrl() {
+  const configured = String(import.meta.env.VITE_API_BASE_URL || '').trim();
+  if (!configured) {
+    return `http://${fallbackHost}:9090`;
+  }
+  if (typeof window === 'undefined') {
+    return configured;
+  }
+
+  // If frontend is opened from another device on LAN, avoid using localhost API targets.
+  try {
+    const parsed = new URL(configured);
+    const currentHost = window.location.hostname;
+    if (!isLocalHostname(currentHost) && isLocalHostname(parsed.hostname)) {
+      const port = parsed.port || '9090';
+      const pathname = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : '';
+      return `${parsed.protocol}//${currentHost}:${port}${pathname}`;
+    }
+    return configured;
+  } catch (error) {
+    return configured;
+  }
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 const api = axios.create({
   baseURL: API_BASE_URL,

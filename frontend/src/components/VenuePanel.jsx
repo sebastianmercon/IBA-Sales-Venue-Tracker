@@ -133,9 +133,14 @@ function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate, onDeleteVenue 
     if (!onDeleteVenue || !venue?.name) {
       return;
     }
-    const confirmDelete = window.confirm(`Delete "${venue.name}" from the tracker?`);
-    if (!confirmDelete) {
-      return;
+    const isTouchDevice =
+      typeof window !== 'undefined' &&
+      ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+    if (!isTouchDevice) {
+      const confirmDelete = window.confirm(`Delete "${venue.name}" from the tracker?`);
+      if (!confirmDelete) {
+        return;
+      }
     }
     setLoading(true);
     setError(null);
@@ -457,7 +462,7 @@ function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate, onDeleteVenue 
               onClick={handleDelete}
               disabled={loading}
             >
-              Delete Venue
+              {loading ? 'Deleting...' : 'Delete Venue'}
             </button>
           </div>
         )}

@@ -7,6 +7,7 @@ import './MapViewer.css';
 // Center on Miami so the map looks ready while data loads.
 const DEFAULT_CENTER = { lat: 25.79, lng: -80.20 };
 const DEFAULT_ZOOM = 14;
+const MAX_AUTO_FIT_ZOOM = 15;
 
 function parseNumber(value) {
   const num = Number.parseFloat(value);
@@ -20,6 +21,13 @@ function getLatLng(venue) {
     return null;
   }
   return { lat, lng };
+}
+
+function getVenueMarkerKey(venue) {
+  if (!venue) {
+    return '';
+  }
+  return String(venue.id || `${venue.recordType || 'venue'}:${venue.name || ''}`);
 }
 
 function getMapStyles(showNativePoi) {
@@ -207,14 +215,32 @@ function MapViewer({
     }
     const google = googleRef.current;
     const bounds = new google.maps.LatLngBounds();
+    let markerCount = 0;
+    let singlePosition = null;
     markersRef.current.forEach((marker) => {
       const position = marker.getPosition();
       if (position) {
         bounds.extend(position);
+        markerCount += 1;
+        singlePosition = position;
       }
     });
     if (!bounds.isEmpty()) {
+      if (markerCount === 1 && singlePosition) {
+        mapRef.current.setCenter(singlePosition);
+        mapRef.current.setZoom(DEFAULT_ZOOM);
+        return;
+      }
       mapRef.current.fitBounds(bounds);
+      google.maps.event.addListenerOnce(mapRef.current, 'idle', () => {
+        if (!mapRef.current) {
+          return;
+        }
+        const currentZoom = mapRef.current.getZoom();
+        if (Number.isFinite(currentZoom) && currentZoom > MAX_AUTO_FIT_ZOOM) {
+          mapRef.current.setZoom(MAX_AUTO_FIT_ZOOM);
+        }
+      });
     }
   }, []);
 
@@ -411,7 +437,7 @@ function MapViewer({
       if (!venue?.name) {
         return;
       }
-      const venueId = venue.name;
+      const venueId = getVenueMarkerKey(venue);
       activeIds.add(venueId);
 
       const cached = geocodeCacheRef.current.get(venueId);
@@ -484,7 +510,7 @@ function MapViewer({
         if (job.cancelled) {
           return;
         }
-        const venueId = venue.name;
+        const venueId = getVenueMarkerKey(venue);
         if (geocodeCacheRef.current.has(venueId)) {
           continue;
         }
@@ -572,7 +598,7 @@ function MapViewer({
     if (!selectedVenue || !mapRef.current || !googleRef.current) {
       return;
     }
-    const venueId = selectedVenue.name;
+    const venueId = getVenueMarkerKey(selectedVenue);
     if (!venueId) {
       return;
     }

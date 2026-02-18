@@ -295,7 +295,33 @@ function App() {
     setProspectFormLoading(true);
     setProspectFormError(null);
     try {
+      const nowIso = new Date().toISOString();
+      const optimisticProspect = {
+        id: `local:prospect:${normalizeName(prospectDraft.name)}:${nowIso}`,
+        recordType: 'prospect',
+        sourceSheet: 'Accounts',
+        name: String(prospectDraft.name || '').trim(),
+        address: String(prospectDraft.address || '').trim(),
+        notes: String(prospectDraft.notes || '').trim(),
+        latitude: Number.isFinite(prospectDraft.latitude) ? prospectDraft.latitude : null,
+        longitude: Number.isFinite(prospectDraft.longitude) ? prospectDraft.longitude : null,
+        visited: false,
+      };
       await createProspect(prospectDraft);
+      setVenues((prev) => {
+        const key = normalizeName(optimisticProspect.name);
+        const hasSameProspect = prev.some(
+          (venue) => normalizeName(venue.name) === key && venue.recordType === 'prospect'
+        );
+        if (hasSameProspect) {
+          return prev.map((venue) =>
+            normalizeName(venue.name) === key && venue.recordType === 'prospect'
+              ? { ...venue, ...optimisticProspect }
+              : venue
+          );
+        }
+        return [...prev, optimisticProspect];
+      });
       if (Number.isFinite(prospectDraft.latitude) && Number.isFinite(prospectDraft.longitude)) {
         const key = normalizeName(prospectDraft.name);
         setCachedCoordinates((prev) => ({
@@ -307,6 +333,11 @@ function App() {
         }));
       }
       setProspectFormOpen(false);
+      // Ensure newly added prospects are visible immediately in list/map.
+      setShowOnlyUnvisited(false);
+      setPriorityFilter('all');
+      setPremiseFilter('all');
+      setVenueQuery('');
       setProspectDraft({
         name: '',
         address: '',
@@ -319,7 +350,8 @@ function App() {
         pollingServiceRef.current.pollNow();
       }
     } catch (err) {
-      setProspectFormError('Failed to save prospect. Please try again.');
+      const serverMessage = err?.response?.data?.error;
+      setProspectFormError(serverMessage || 'Failed to save prospect. Please try again.');
     } finally {
       setProspectFormLoading(false);
     }
@@ -419,8 +451,13 @@ function App() {
             .filter(Boolean)
             .join('\n')
             .trim(),
-          latitude: Number.isFinite(top.latitude) ? top.latitude : prev.latitude,
-          longitude: Number.isFinite(top.longitude) ? top.longitude : prev.longitude,
+          // Keep the user-dropped pin as source of truth for placement.
+          latitude: Number.isFinite(prev.latitude)
+            ? prev.latitude
+            : (Number.isFinite(top.latitude) ? top.latitude : prev.latitude),
+          longitude: Number.isFinite(prev.longitude)
+            ? prev.longitude
+            : (Number.isFinite(top.longitude) ? top.longitude : prev.longitude),
         }));
       } else if (reverseAddress) {
         setProspectDraft((prev) => ({
@@ -478,8 +515,10 @@ function App() {
       }
     } catch (primaryError) {
       const status = primaryError?.response?.status;
+      const serverMessage = String(primaryError?.response?.data?.error || primaryError?.message || '').toLowerCase();
+      const looksLikeNotFound = serverMessage.includes('not found');
       // Fallback: if record type is stale/mismatched, try deleting from the other sheet.
-      if (status === 404 || status === 400) {
+      if (status === 404 || status === 400 || (status === 500 && looksLikeNotFound)) {
         if (isProspect) {
           await deleteVenue(venue.name);
         } else {
