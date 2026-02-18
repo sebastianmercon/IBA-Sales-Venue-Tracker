@@ -52,9 +52,15 @@ const {
   deleteVenue,
   deleteProspect,
   cleanupProspectNotesTokens,
+  checkVenueDuplicates,
 } = require('./handlers/sheets');
 const { syncVenuesToMaps, updatePlacemarkColor, readMyMapsPolygons } = require('./handlers/maps');
-const { syncSheetsToMaps, getSyncStatus } = require('./handlers/sync');
+const {
+  syncSheetsToMaps,
+  getSyncStatus,
+  runDualSyncIfDue,
+  runDualSyncNow,
+} = require('./handlers/sync');
 
 const VENUES_CACHE_TTL = 30_000;   // 30 seconds
 const CLUSTERS_CACHE_TTL = 300_000; // 5 minutes (polygons rarely change)
@@ -105,9 +111,53 @@ const syncHandler = async (req, res) => {
           return sendJson(req, res, 200, cached);
         }
         const auth = await getAuth(config);
+        await runDualSyncIfDue(auth, config.sheetsId, config.sheetName, config.prospectSheetName);
         const status = await getSyncStatus(auth, config.sheetsId, config.sheetName);
         cache.set('venues', status, VENUES_CACHE_TTL);
         return sendJson(req, res, 200, status);
+      }
+
+      if (method === 'POST' && path === '/api/venues/duplicate-check') {
+        const { venueName } = req.body || {};
+        if (!venueName || !String(venueName).trim()) {
+          return res.status(400).json({ error: 'venueName is required' });
+        }
+        const auth = await getAuth(config);
+        const result = await checkVenueDuplicates(
+          auth,
+          config.sheetsId,
+          config.sheetName,
+          config.prospectSheetName,
+          venueName
+        );
+        return res.status(200).json(result);
+      }
+
+      if (method === 'POST' && path === '/api/venues/dual-sync') {
+        const auth = await getAuth(config);
+        const force = Boolean(req.body?.force ?? true);
+        const result = await runDualSyncIfDue(
+          auth,
+          config.sheetsId,
+          config.sheetName,
+          config.prospectSheetName,
+          { force }
+        );
+        cache.invalidate('venues');
+        return res.status(200).json(result);
+      }
+
+      if (method === 'POST' && path === '/api/venues/backfill') {
+        const auth = await getAuth(config);
+        const result = await runDualSyncNow(
+          auth,
+          config.sheetsId,
+          config.sheetName,
+          config.prospectSheetName,
+          { force: true, backfill: true }
+        );
+        cache.invalidate('venues');
+        return res.status(200).json(result);
       }
 
       if (method === 'POST' && path === '/api/prospects/enrich') {
@@ -137,6 +187,13 @@ const syncHandler = async (req, res) => {
         }
         const auth = await getAuth(config);
         const result = await createProspect(auth, config.sheetsId, config.prospectSheetName, payload);
+        await runDualSyncIfDue(
+          auth,
+          config.sheetsId,
+          config.sheetName,
+          config.prospectSheetName,
+          { force: true }
+        );
         cache.invalidate('venues');
         return res.status(201).json({ success: true, result });
       }

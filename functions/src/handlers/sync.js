@@ -8,8 +8,39 @@
  * Backend reads Sheets, updates My Maps to match
  */
 
-const { readVenues } = require('./sheets');
+const { readVenues, syncVenuesAcrossSheets } = require('./sheets');
 const { syncVenuesToMaps } = require('./maps');
+const { cache } = require('../utils/cache');
+
+const DUAL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+let lastDualSyncAt = 0;
+let dualSyncInFlight = null;
+
+async function runDualSyncNow(auth, sheetsId, sheetName, prospectSheetName, options = {}) {
+  if (!prospectSheetName) {
+    return { success: true, skipped: true, reason: 'PROSPECT_SHEET_NAME is not configured' };
+  }
+  const result = await syncVenuesAcrossSheets(auth, sheetsId, sheetName, prospectSheetName, options);
+  lastDualSyncAt = Date.now();
+  cache.invalidate('venues');
+  return result;
+}
+
+async function runDualSyncIfDue(auth, sheetsId, sheetName, prospectSheetName, options = {}) {
+  const force = Boolean(options.force);
+  const now = Date.now();
+  if (!force && now - lastDualSyncAt < DUAL_SYNC_INTERVAL_MS) {
+    return { success: true, skipped: true, dueInMs: DUAL_SYNC_INTERVAL_MS - (now - lastDualSyncAt) };
+  }
+  if (dualSyncInFlight) {
+    return dualSyncInFlight;
+  }
+  dualSyncInFlight = runDualSyncNow(auth, sheetsId, sheetName, prospectSheetName, options)
+    .finally(() => {
+      dualSyncInFlight = null;
+    });
+  return dualSyncInFlight;
+}
 
 /**
  * Full sync from Sheets to My Maps
@@ -65,4 +96,6 @@ async function getSyncStatus(auth, sheetsId, sheetName) {
 module.exports = {
   syncSheetsToMaps,
   getSyncStatus,
+  runDualSyncIfDue,
+  runDualSyncNow,
 };

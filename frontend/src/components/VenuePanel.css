@@ -388,9 +388,16 @@
   border-radius: 8px;
   padding: 7px 12px;
   background: #fff;
+  color: #1f2f46;
   font-size: 12px;
   font-weight: 600;
+  min-width: 92px;
   cursor: pointer;
+}
+
+.venue-panel-edit-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .venue-notes-card {

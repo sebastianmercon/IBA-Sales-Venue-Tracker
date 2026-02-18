@@ -3,6 +3,7 @@ import MapViewer from './components/MapViewer';
 import VenuePanel from './components/VenuePanel';
 import PollingService from './services/polling';
 import {
+  checkVenueDuplicates,
   createProspect,
   deleteProspect,
   deleteVenue,
@@ -85,10 +86,18 @@ function App() {
     name: '',
     address: '',
     notes: '',
+    bestTimeToVisit: '',
+    bestDaysToVisit: '',
+    contactPhone: '',
+    contactEmail: '',
+    premiseType: '',
+    priorityTag: '',
     latitude: null,
     longitude: null,
   });
   const [enrichmentSuggestions, setEnrichmentSuggestions] = useState([]);
+  const [showProspectMoreDetails, setShowProspectMoreDetails] = useState(false);
+  const [duplicateCheckResult, setDuplicateCheckResult] = useState(null);
   const [venueListScrollTop, setVenueListScrollTop] = useState(0);
   const [venueListViewportHeight, setVenueListViewportHeight] = useState(300);
   const pollingServiceRef = React.useRef(null);
@@ -259,6 +268,8 @@ function App() {
     }));
     setProspectFormError(null);
     setEnrichmentSuggestions([]);
+    setDuplicateCheckResult(null);
+    setShowProspectMoreDetails(false);
     setProspectFormOpen(true);
   }, []);
 
@@ -286,7 +297,7 @@ function App() {
     }
   };
 
-  const handleProspectSave = async (event) => {
+  const handleProspectSave = async (event, options = {}) => {
     event.preventDefault();
     if (!prospectDraft.name.trim()) {
       setProspectFormError('Venue name is required.');
@@ -295,6 +306,18 @@ function App() {
     setProspectFormLoading(true);
     setProspectFormError(null);
     try {
+      if (!options.forceCreate) {
+        const duplicateResult = await checkVenueDuplicates(prospectDraft.name);
+        const hasConflicts =
+          (duplicateResult?.exactMatches?.length || 0) > 0 ||
+          (duplicateResult?.uncertainCandidates?.length || 0) > 0;
+        if (hasConflicts) {
+          setDuplicateCheckResult(duplicateResult);
+          setProspectFormLoading(false);
+          return;
+        }
+      }
+
       const nowIso = new Date().toISOString();
       const optimisticProspect = {
         id: `local:prospect:${normalizeName(prospectDraft.name)}:${nowIso}`,
@@ -303,6 +326,12 @@ function App() {
         name: String(prospectDraft.name || '').trim(),
         address: String(prospectDraft.address || '').trim(),
         notes: String(prospectDraft.notes || '').trim(),
+        bestTimeToVisit: String(prospectDraft.bestTimeToVisit || '').trim(),
+        bestDaysToVisit: String(prospectDraft.bestDaysToVisit || '').trim(),
+        contactPhone: String(prospectDraft.contactPhone || '').trim(),
+        contactEmail: String(prospectDraft.contactEmail || '').trim(),
+        premiseType: String(prospectDraft.premiseType || '').trim(),
+        priorityTag: String(prospectDraft.priorityTag || '').trim(),
         latitude: Number.isFinite(prospectDraft.latitude) ? prospectDraft.latitude : null,
         longitude: Number.isFinite(prospectDraft.longitude) ? prospectDraft.longitude : null,
         visited: false,
@@ -342,9 +371,17 @@ function App() {
         name: '',
         address: '',
         notes: '',
+        bestTimeToVisit: '',
+        bestDaysToVisit: '',
+        contactPhone: '',
+        contactEmail: '',
+        premiseType: '',
+        priorityTag: '',
         latitude: null,
         longitude: null,
       });
+      setDuplicateCheckResult(null);
+      setShowProspectMoreDetails(false);
       await loadVenues();
       if (pollingServiceRef.current) {
         pollingServiceRef.current.pollNow();
@@ -355,6 +392,10 @@ function App() {
     } finally {
       setProspectFormLoading(false);
     }
+  };
+
+  const handleForceCreateAfterDuplicateWarning = async (event) => {
+    await handleProspectSave(event, { forceCreate: true });
   };
 
   const runClientGeocodeFallback = useCallback(async (venueName) => {
@@ -886,7 +927,10 @@ function App() {
                 type="text"
                 placeholder="Venue name"
                 value={prospectDraft.name}
-                onChange={(e) => setProspectDraft((prev) => ({ ...prev, name: e.target.value }))}
+                onChange={(e) => {
+                  setDuplicateCheckResult(null);
+                  setProspectDraft((prev) => ({ ...prev, name: e.target.value }));
+                }}
               />
               <input
                 type="text"
@@ -900,9 +944,80 @@ function App() {
                 onChange={(e) => setProspectDraft((prev) => ({ ...prev, notes: e.target.value }))}
               />
             </div>
+            <details
+              className="prospect-modal-details"
+              open={showProspectMoreDetails}
+              onToggle={(e) => setShowProspectMoreDetails(Boolean(e.currentTarget.open))}
+            >
+              <summary>More details (optional)</summary>
+              <div className="prospect-modal-grid">
+                <input
+                  type="text"
+                  placeholder="Best time to visit"
+                  value={prospectDraft.bestTimeToVisit}
+                  onChange={(e) => setProspectDraft((prev) => ({ ...prev, bestTimeToVisit: e.target.value }))}
+                />
+                <input
+                  type="text"
+                  placeholder="Days of the week"
+                  value={prospectDraft.bestDaysToVisit}
+                  onChange={(e) => setProspectDraft((prev) => ({ ...prev, bestDaysToVisit: e.target.value }))}
+                />
+                <input
+                  type="text"
+                  placeholder="Contact phone"
+                  value={prospectDraft.contactPhone}
+                  onChange={(e) => setProspectDraft((prev) => ({ ...prev, contactPhone: e.target.value }))}
+                />
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={prospectDraft.contactEmail}
+                  onChange={(e) => setProspectDraft((prev) => ({ ...prev, contactEmail: e.target.value }))}
+                />
+                <select
+                  value={prospectDraft.premiseType}
+                  onChange={(e) => setProspectDraft((prev) => ({ ...prev, premiseType: e.target.value }))}
+                >
+                  <option value="">On/Off premise</option>
+                  <option value="on">On-premise</option>
+                  <option value="off">Off-premise</option>
+                </select>
+                <input
+                  type="text"
+                  placeholder="Priority tag"
+                  value={prospectDraft.priorityTag}
+                  onChange={(e) => setProspectDraft((prev) => ({ ...prev, priorityTag: e.target.value }))}
+                />
+              </div>
+            </details>
             {enrichmentSuggestions.length > 0 && (
               <div className="prospect-enrichment-hint">
                 Suggestion: {enrichmentSuggestions[0].venueName} - {enrichmentSuggestions[0].address}
+              </div>
+            )}
+            {duplicateCheckResult && (
+              <div className="prospect-duplicate-warning">
+                <strong>Possible duplicate found.</strong>
+                {(duplicateCheckResult.exactMatches || []).length > 0 && (
+                  <div>Exact match: {duplicateCheckResult.exactMatches.map((m) => m.name).join(', ')}</div>
+                )}
+                {(duplicateCheckResult.uncertainCandidates || []).length > 0 && (
+                  <div>
+                    Similar venues:{' '}
+                    {duplicateCheckResult.uncertainCandidates
+                      .map((m) => `${m.name} (${Math.round((m.similarity || 0) * 100)}%)`)
+                      .join(', ')}
+                  </div>
+                )}
+                <div className="prospect-duplicate-actions">
+                  <button type="button" onClick={() => setDuplicateCheckResult(null)} disabled={prospectFormLoading}>
+                    Use existing / review
+                  </button>
+                  <button type="button" onClick={handleForceCreateAfterDuplicateWarning} disabled={prospectFormLoading}>
+                    Create new anyway
+                  </button>
+                </div>
               </div>
             )}
             {prospectFormError && <div className="prospect-form-error">{prospectFormError}</div>}

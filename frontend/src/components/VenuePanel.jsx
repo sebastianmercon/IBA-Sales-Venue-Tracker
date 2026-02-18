@@ -426,10 +426,10 @@ function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate, onDeleteVenue 
                         onChange={(e) => setContactDraft((prev) => ({ ...prev, notes: e.target.value }))}
                       />
                       <div className="venue-panel-edit-actions-row">
-                        <button type="button" className="venue-panel-edit-btn" onClick={handleContactSave}>
-                          Save
+                        <button type="button" className="venue-panel-edit-btn" onClick={handleContactSave} disabled={loading}>
+                          {loading ? 'Saving info...' : 'Save info'}
                         </button>
-                        <button type="button" className="venue-panel-edit-btn" onClick={() => setEditingContact(false)}>
+                        <button type="button" className="venue-panel-edit-btn" onClick={() => setEditingContact(false)} disabled={loading}>
                           Cancel
                         </button>
                       </div>
