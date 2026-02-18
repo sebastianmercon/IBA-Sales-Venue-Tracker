@@ -119,6 +119,36 @@ export async function createProspect(payload) {
   }
 }
 
+export async function checkVenueDuplicates(venueName) {
+  try {
+    const response = await api.post('/api/venues/duplicate-check', { venueName });
+    return response.data;
+  } catch (error) {
+    console.error('Error checking duplicates:', error);
+    throw error;
+  }
+}
+
+export async function triggerDualSync(force = true) {
+  try {
+    const response = await api.post('/api/venues/dual-sync', { force });
+    return response.data;
+  } catch (error) {
+    console.error('Error triggering dual sync:', error);
+    throw error;
+  }
+}
+
+export async function runBackfillSync() {
+  try {
+    const response = await api.post('/api/venues/backfill', {});
+    return response.data;
+  } catch (error) {
+    console.error('Error running backfill sync:', error);
+    throw error;
+  }
+}
+
 export async function updateProspect(identifier, payload) {
   try {
     const response = await api.patch(`/api/prospects/${encodeURIComponent(identifier)}`, payload);

@@ -88,6 +88,101 @@ function normalizeKey(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+const NAME_STOP_WORDS = new Set([
+  'the',
+  'and',
+  'of',
+  'at',
+  'in',
+  'on',
+  'miami',
+  'wynwood',
+  'brickell',
+  'beach',
+  'downtown',
+  'restaurant',
+  'bar',
+  'club',
+  'lounge',
+  'cafe',
+  'grill',
+  'llc',
+  'inc',
+  'co',
+]);
+
+function normalizeLooseName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getNameTokens(value) {
+  return normalizeLooseName(value)
+    .split(' ')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1 && !NAME_STOP_WORDS.has(token));
+}
+
+function scoreVenueNameSimilarity(a, b) {
+  const keyA = normalizeLooseName(a);
+  const keyB = normalizeLooseName(b);
+  if (!keyA || !keyB) {
+    return 0;
+  }
+  if (keyA === keyB) {
+    return 1;
+  }
+
+  const tokensA = getNameTokens(a);
+  const tokensB = getNameTokens(b);
+  if (tokensA.length === 0 || tokensB.length === 0) {
+    return 0;
+  }
+
+  const setA = new Set(tokensA);
+  const setB = new Set(tokensB);
+  let intersection = 0;
+  setA.forEach((token) => {
+    if (setB.has(token)) {
+      intersection += 1;
+    }
+  });
+  const union = new Set([...setA, ...setB]).size;
+  const jaccard = union > 0 ? intersection / union : 0;
+
+  const joinedA = tokensA.join(' ');
+  const joinedB = tokensB.join(' ');
+  if (joinedA && joinedB && (joinedA.includes(joinedB) || joinedB.includes(joinedA))) {
+    return Math.max(jaccard, 0.86);
+  }
+
+  const firstTokenBoost = tokensA[0] && tokensA[0] === tokensB[0] ? 0.12 : 0;
+  return Math.min(1, jaccard + firstTokenBoost);
+}
+
+function rankDuplicateCandidates(targetName, candidates) {
+  const ranked = candidates
+    .map((candidate) => ({
+      ...candidate,
+      similarity: scoreVenueNameSimilarity(targetName, candidate.name),
+    }))
+    .filter((candidate) => candidate.similarity >= 0.5)
+    .sort((a, b) => b.similarity - a.similarity);
+
+  const top = ranked[0] || null;
+  const second = ranked[1] || null;
+  const margin = top && second ? top.similarity - second.similarity : top ? top.similarity : 0;
+  const confident = top && (top.similarity >= 0.82 || (top.similarity >= 0.68 && margin >= 0.18));
+  return {
+    confident: confident ? top : null,
+    uncertain: confident ? ranked.slice(1, 4) : ranked.slice(0, 4),
+    ranked: ranked.slice(0, 8),
+  };
+}
+
 function getCacheKey(sheetsId, sheetName) {
   return `${sheetsId}:${sheetName}`;
 }
@@ -474,6 +569,47 @@ async function createProspect(auth, sheetsId, prospectSheetName, payload) {
   return { success: true, sheetName: resolvedSheetName };
 }
 
+async function createBackendVenue(auth, sheetsId, backendSheetName, payload) {
+  const sheets = google.sheets({ version: 'v4', auth });
+  const mappings = getColumnMappings();
+  const resolvedSheetName = await safeSheetName(sheets, sheetsId, backendSheetName);
+
+  const row = [];
+  row[mappings.VENUE_NAME] = String(payload.name || '').trim();
+  row[mappings.ADDRESS] = String(payload.address || '').trim();
+  if (Number.isFinite(mappings.VISITED) && mappings.VISITED >= 0) {
+    row[mappings.VISITED] = payload.visited ? 'TRUE' : 'FALSE';
+  }
+  row[mappings.PREMISE_TYPE] = String(payload.premiseType || '').trim();
+  row[mappings.CONTACT_PHONE] = String(payload.contactPhone || '').trim();
+  row[mappings.CONTACT_EMAIL] = String(payload.contactEmail || '').trim();
+  row[mappings.BEST_TIME] = String(payload.bestTimeToVisit || '').trim();
+  row[mappings.BEST_DAYS] = String(payload.bestDaysToVisit || '').trim();
+  row[mappings.PRIORITY_TAG] = String(payload.priorityTag || '').trim();
+  row[mappings.NOTES] = stripSystemTokens(payload.notes);
+
+  const maxColumnIndex = getMaxColumnIndex(mappings);
+  const normalizedRow = new Array(maxColumnIndex + 1).fill('');
+  row.forEach((value, index) => {
+    if (index >= 0) {
+      normalizedRow[index] = value ?? '';
+    }
+  });
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: sheetsId,
+    range: `${resolvedSheetName}!A:A`,
+    valueInputOption: 'USER_ENTERED',
+    insertDataOption: 'INSERT_ROWS',
+    resource: {
+      values: [normalizedRow],
+    },
+  });
+
+  rowIndexCache.delete(getCacheKey(sheetsId, resolvedSheetName));
+  return { success: true, sheetName: resolvedSheetName };
+}
+
 async function updateProspect(auth, sheetsId, prospectSheetName, identifier, payload) {
   const sheets = google.sheets({ version: 'v4', auth });
   const mappings = getProspectColumnMappings();
@@ -563,6 +699,270 @@ async function updateProspect(auth, sheetsId, prospectSheetName, identifier, pay
   });
   rowIndexCache.delete(getCacheKey(sheetsId, resolvedSheetName));
   return { success: true, rowIndex, updated: updates.length };
+}
+
+async function updateBackendVenue(auth, sheetsId, backendSheetName, identifier, payload) {
+  const sheets = google.sheets({ version: 'v4', auth });
+  const mappings = getColumnMappings();
+  const resolvedSheetName = await safeSheetName(sheets, sheetsId, backendSheetName);
+  const targetName = String(identifier || payload.name || '').trim();
+  if (!targetName) {
+    throw new Error('Venue name is required for backend updates');
+  }
+
+  const rowIndex = await getRowIndexByName(
+    sheets,
+    sheetsId,
+    resolvedSheetName,
+    targetName,
+    mappings
+  );
+  if (!rowIndex) {
+    throw new Error(`Venue "${targetName}" not found`);
+  }
+
+  const updates = [];
+  const setField = (columnIndex, key, transform) => {
+    if (!Number.isFinite(columnIndex) || columnIndex < 0 || !(key in payload)) {
+      return;
+    }
+    const col = getColumnLetter(columnIndex);
+    if (!col) return;
+    const raw = payload[key];
+    const value = transform ? transform(raw) : (raw ?? '');
+    updates.push({
+      range: `${resolvedSheetName}!${col}${rowIndex}`,
+      values: [[value]],
+    });
+  };
+
+  setField(mappings.VENUE_NAME, 'name');
+  setField(mappings.ADDRESS, 'address');
+  setField(mappings.VISITED, 'visited', (value) => (value ? 'TRUE' : 'FALSE'));
+  setField(mappings.PREMISE_TYPE, 'premiseType');
+  setField(mappings.CONTACT_PHONE, 'contactPhone');
+  setField(mappings.CONTACT_EMAIL, 'contactEmail');
+  setField(mappings.BEST_TIME, 'bestTimeToVisit');
+  setField(mappings.BEST_DAYS, 'bestDaysToVisit');
+  setField(mappings.PRIORITY_TAG, 'priorityTag');
+  if ('notes' in payload) {
+    setField(mappings.NOTES, 'notes', (value) => stripSystemTokens(String(value || '')));
+  }
+
+  if (updates.length === 0) {
+    return { success: true, rowIndex, updated: 0 };
+  }
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: sheetsId,
+    resource: {
+      valueInputOption: 'USER_ENTERED',
+      data: updates,
+    },
+  });
+  rowIndexCache.delete(getCacheKey(sheetsId, resolvedSheetName));
+  return { success: true, rowIndex, updated: updates.length };
+}
+
+function mergePayloadForDirection(sourceVenue, targetVenue, backfill) {
+  const payload = {};
+  const fields = [
+    ['address', 'address'],
+    ['notes', 'notes'],
+    ['bestTimeToVisit', 'bestTimeToVisit'],
+    ['bestDaysToVisit', 'bestDaysToVisit'],
+    ['contactPhone', 'contactPhone'],
+    ['contactEmail', 'contactEmail'],
+    ['premiseType', 'premiseType'],
+    ['priorityTag', 'priorityTag'],
+  ];
+
+  fields.forEach(([key]) => {
+    const sourceValue = String(sourceVenue[key] || '').trim();
+    const targetValue = String(targetVenue[key] || '').trim();
+    if (!sourceValue) return;
+    if (!targetValue || (backfill && targetValue !== sourceValue)) {
+      payload[key] = sourceValue;
+    }
+  });
+
+  return payload;
+}
+
+async function syncVenuesAcrossSheets(
+  auth,
+  sheetsId,
+  backendSheetName,
+  prospectSheetName,
+  options = {}
+) {
+  const backfill = Boolean(options.backfill);
+  const allVenues = await readVenues(auth, sheetsId, backendSheetName);
+  const backendVenues = allVenues.filter((venue) => venue.recordType === 'active');
+  const prospectVenues = allVenues.filter((venue) => venue.recordType === 'prospect');
+
+  const matchedBackend = new Set();
+  const matchedProspects = new Set();
+  const conflicts = [];
+  const stats = {
+    addedToAccounts: 0,
+    addedToBackend: 0,
+    updatedAccounts: 0,
+    updatedBackend: 0,
+  };
+
+  const resolveMatch = (sourceVenue, targetVenues, matchedSet) => {
+    const exact = targetVenues.find((candidate) => {
+      if (matchedSet.has(candidate.id)) return false;
+      return normalizeKey(candidate.name) === normalizeKey(sourceVenue.name);
+    });
+    if (exact) {
+      return { type: 'exact', match: exact };
+    }
+    const candidates = targetVenues
+      .filter((candidate) => !matchedSet.has(candidate.id))
+      .map((candidate) => ({ name: candidate.name, venue: candidate }));
+    const ranked = rankDuplicateCandidates(sourceVenue.name, candidates);
+    if (ranked.confident) {
+      return { type: 'fuzzy', match: ranked.confident.venue };
+    }
+    if (ranked.uncertain.length > 0) {
+      return {
+        type: 'uncertain',
+        candidates: ranked.uncertain.map((entry) => ({
+          name: entry.name,
+          similarity: entry.similarity,
+        })),
+      };
+    }
+    return { type: 'none' };
+  };
+
+  for (const backendVenue of backendVenues) {
+    const resolution = resolveMatch(backendVenue, prospectVenues, matchedProspects);
+    if (resolution.type === 'exact' || resolution.type === 'fuzzy') {
+      const target = resolution.match;
+      matchedBackend.add(backendVenue.id);
+      matchedProspects.add(target.id);
+      const payload = mergePayloadForDirection(backendVenue, target, backfill);
+      if (Object.keys(payload).length > 0) {
+        await updateProspect(auth, sheetsId, prospectSheetName, target.name, payload);
+        stats.updatedAccounts += 1;
+      }
+      continue;
+    }
+    if (resolution.type === 'uncertain') {
+      conflicts.push({
+        source: 'backend',
+        sourceName: backendVenue.name,
+        candidates: resolution.candidates,
+      });
+      continue;
+    }
+
+    await createProspect(auth, sheetsId, prospectSheetName, {
+      name: backendVenue.name,
+      address: backendVenue.address,
+      notes: backendVenue.notes,
+      contactPhone: backendVenue.contactPhone,
+      contactEmail: backendVenue.contactEmail,
+      bestTimeToVisit: backendVenue.bestTimeToVisit,
+      bestDaysToVisit: backendVenue.bestDaysToVisit,
+      premiseType: backendVenue.premiseType,
+      priorityTag: backendVenue.priorityTag,
+    });
+    stats.addedToAccounts += 1;
+  }
+
+  for (const prospectVenue of prospectVenues) {
+    if (matchedProspects.has(prospectVenue.id)) {
+      continue;
+    }
+    const resolution = resolveMatch(prospectVenue, backendVenues, matchedBackend);
+    if (resolution.type === 'exact' || resolution.type === 'fuzzy') {
+      const target = resolution.match;
+      matchedProspects.add(prospectVenue.id);
+      matchedBackend.add(target.id);
+      const payload = mergePayloadForDirection(prospectVenue, target, backfill);
+      if (Object.keys(payload).length > 0) {
+        await updateBackendVenue(auth, sheetsId, backendSheetName, target.name, payload);
+        stats.updatedBackend += 1;
+      }
+      continue;
+    }
+    if (resolution.type === 'uncertain') {
+      conflicts.push({
+        source: 'accounts',
+        sourceName: prospectVenue.name,
+        candidates: resolution.candidates,
+      });
+      continue;
+    }
+
+    await createBackendVenue(auth, sheetsId, backendSheetName, {
+      name: prospectVenue.name,
+      address: prospectVenue.address,
+      notes: prospectVenue.notes,
+      contactPhone: prospectVenue.contactPhone,
+      contactEmail: prospectVenue.contactEmail,
+      bestTimeToVisit: prospectVenue.bestTimeToVisit,
+      bestDaysToVisit: prospectVenue.bestDaysToVisit,
+      premiseType: prospectVenue.premiseType,
+      priorityTag: prospectVenue.priorityTag,
+      visited: prospectVenue.visited,
+    });
+    stats.addedToBackend += 1;
+  }
+
+  return {
+    success: true,
+    stats,
+    conflicts,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+async function checkVenueDuplicates(auth, sheetsId, backendSheetName, prospectSheetName, venueName) {
+  const allVenues = await readVenues(auth, sheetsId, backendSheetName);
+  const normalized = normalizeKey(venueName);
+  const exactMatches = allVenues
+    .filter((venue) => normalizeKey(venue.name) === normalized)
+    .map((venue) => ({
+      name: venue.name,
+      recordType: venue.recordType,
+      sourceSheet: venue.sourceSheet,
+      similarity: 1,
+    }));
+
+  const ranked = rankDuplicateCandidates(
+    venueName,
+    allVenues
+      .filter((venue) => normalizeKey(venue.name) !== normalized)
+      .map((venue) => ({
+      name: venue.name,
+      recordType: venue.recordType,
+      sourceSheet: venue.sourceSheet,
+      }))
+  );
+
+  return {
+    success: true,
+    exactMatches,
+    uncertainCandidates: ranked.uncertain.map((candidate) => ({
+      name: candidate.name,
+      recordType: candidate.recordType,
+      sourceSheet: candidate.sourceSheet,
+      similarity: candidate.similarity,
+    })),
+    confidentCandidate: ranked.confident
+      ? {
+          name: ranked.confident.name,
+          recordType: ranked.confident.recordType,
+          sourceSheet: ranked.confident.sourceSheet,
+          similarity: ranked.confident.similarity,
+        }
+      : null,
+  };
 }
 
 async function deleteRowByVenueName(auth, sheetsId, preferredSheetName, venueName, mappings) {
@@ -763,8 +1163,12 @@ module.exports = {
   updateVisitedStatus,
   updateVenueCoordinates,
   createProspect,
+  createBackendVenue,
   updateProspect,
+  updateBackendVenue,
   deleteVenue,
   deleteProspect,
   cleanupProspectNotesTokens,
+  syncVenuesAcrossSheets,
+  checkVenueDuplicates,
 };

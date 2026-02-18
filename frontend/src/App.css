@@ -815,6 +815,20 @@
   resize: vertical;
 }
 
+.prospect-modal-details {
+  margin-top: 10px;
+  border: 1px solid var(--iba-warm-200);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.prospect-modal-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #1E3A5F;
+  margin-bottom: 8px;
+}
+
 .prospect-enrichment-hint {
   margin-top: 10px;
   font-size: 12px;
@@ -829,6 +843,32 @@
   margin-top: 10px;
   font-size: 12px;
   color: #b24816;
+}
+
+.prospect-duplicate-warning {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #7a2a10;
+  background: rgba(226, 144, 78, 0.12);
+  border: 1px solid rgba(226, 144, 78, 0.35);
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+
+.prospect-duplicate-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
+.prospect-duplicate-actions button {
+  border: 1px solid var(--iba-warm-300);
+  background: #fff;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .prospect-modal-actions {
