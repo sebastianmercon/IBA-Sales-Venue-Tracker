@@ -86,19 +86,20 @@ function getColumnMappings() {
 /**
  * Column mappings for the simplified prospect sheet.
  * Default order:
- * A=Venue Name, B=Address, C=Notes/Contact.
+ * A=Venue Name, B=Address, C=Visited, D=Notes/Contact.
  *
  * Optional overrides (0-indexed):
  * PROSPECT_COLUMN_VENUE_NAME_INDEX
  * PROSPECT_COLUMN_ADDRESS_INDEX
+ * PROSPECT_COLUMN_VISITED_INDEX
  * PROSPECT_COLUMN_NOTES_INDEX
  */
 function getProspectColumnMappings() {
   return {
     VENUE_NAME: parseColumnIndex('PROSPECT_COLUMN_VENUE_NAME_INDEX', 0), // Column A
     ADDRESS: parseColumnIndex('PROSPECT_COLUMN_ADDRESS_INDEX', 1), // Column B
-    NOTES: parseColumnIndex('PROSPECT_COLUMN_NOTES_INDEX', 2), // Column C
-    VISITED: -1,
+    VISITED: parseColumnIndex('PROSPECT_COLUMN_VISITED_INDEX', 2), // Column C
+    NOTES: parseColumnIndex('PROSPECT_COLUMN_NOTES_INDEX', 3), // Column D
     CITY: -1,
     STATE: -1,
     ZIP: -1,

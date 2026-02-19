@@ -224,6 +224,11 @@ async function readVisitTimes(auth, sheetsId, visitTimesSheetName, mappings) {
   const sheets = google.sheets({ version: 'v4', auth });
   try {
     const resolvedSheetName = await safeSheetName(sheets, sheetsId, visitTimesSheetName);
+    // If the sheet doesn't exist, safeSheetName returns a fallback (e.g. Accounts).
+    // Reading visit times from the wrong sheet would pollute bestTimeToVisit with addresses.
+    if (resolvedSheetName !== visitTimesSheetName) {
+      return new Map();
+    }
     const maxColumnIndex = Math.max(
       mappings.VISIT_TIMES_NAME,
       mappings.VISIT_TIMES_BEST_TIME,
@@ -551,7 +556,9 @@ async function createProspect(auth, sheetsId, prospectSheetName, payload) {
   const row = [];
   row[mappings.VENUE_NAME] = String(payload.name || '').trim();
   row[mappings.ADDRESS] = String(payload.address || '').trim();
-  row[mappings.VISITED] = payload.visited ? 'TRUE' : 'FALSE';
+  if (Number.isFinite(mappings.VISITED) && mappings.VISITED >= 0) {
+    row[mappings.VISITED] = payload.visited ? 'TRUE' : 'FALSE';
+  }
   row[mappings.PREMISE_TYPE] = String(payload.premiseType || '').trim();
   row[mappings.CONTACT_NAME] = String(payload.contactName || '').trim();
   row[mappings.CONTACT_TITLE] = String(payload.contactTitle || '').trim();
@@ -806,6 +813,16 @@ function mergePayloadForDirection(sourceVenue, targetVenue, backfill) {
     }
   });
 
+  if (typeof sourceVenue?.visited === 'boolean') {
+    const sourceVisited = sourceVenue.visited;
+    const targetVisited = typeof targetVenue?.visited === 'boolean'
+      ? targetVenue.visited
+      : null;
+    if (targetVisited === null || targetVisited !== sourceVisited || backfill) {
+      payload.visited = sourceVisited;
+    }
+  }
+
   return payload;
 }
 
@@ -883,6 +900,7 @@ async function syncVenuesAcrossSheets(
     await createProspect(auth, sheetsId, prospectSheetName, {
       name: backendVenue.name,
       address: backendVenue.address,
+      visited: backendVenue.visited,
       notes: backendVenue.notes,
       contactPhone: backendVenue.contactPhone,
       contactEmail: backendVenue.contactEmail,

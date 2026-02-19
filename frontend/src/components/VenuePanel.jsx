@@ -278,10 +278,10 @@ function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate, onDeleteVenue 
             </div>
           )}
 
-          <div className="venue-panel-section">
-            <label className="venue-panel-label">Cluster</label>
-            <div className="venue-panel-value">
-              {clusterStyle ? (
+          {clusterInfo.number && (
+            <div className="venue-panel-section">
+              <label className="venue-panel-label">Cluster</label>
+              <div className="venue-panel-value">
                 <span
                   className="cluster-badge"
                   style={{
@@ -292,11 +292,9 @@ function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate, onDeleteVenue 
                 >
                   {clusterInfo.label}
                 </span>
-              ) : (
-                <span className="cluster-badge cluster-badge--na">{clusterInfo.label}</span>
-              )}
+              </div>
             </div>
-          </div>
+          )}
 
           {premiseInfo.label && (
             <div className="venue-panel-section">
@@ -348,33 +346,37 @@ function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate, onDeleteVenue 
             </div>
           )}
 
-          <div className="venue-panel-section">
-            <label className="venue-panel-label">Address</label>
-            <div className="venue-address-card">
-              <div className="venue-panel-value">{venue.address || 'N/A'}</div>
-              {mapsUrl && (
-                <a
-                  href={mapsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="venue-address-link"
-                >
-                  Open in Maps
-                </a>
-              )}
+          {venue.address && (
+            <div className="venue-panel-section">
+              <label className="venue-panel-label">Address</label>
+              <div className="venue-address-card">
+                <div className="venue-panel-value">{venue.address}</div>
+                {mapsUrl && (
+                  <a
+                    href={mapsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="venue-address-link"
+                  >
+                    Open in Maps
+                  </a>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </section>
 
         {(venue.contactName || venue.contactTitle || venue.contactPhone || venue.contactEmail || isProspect) && (
           <section className="venue-panel-group">
             <h3 className="venue-panel-group-title">Relationship</h3>
-            <div className="venue-panel-section">
-              <label className="venue-panel-label">Contact</label>
-              <div className="venue-panel-value">
-                {[venue.contactName, venue.contactTitle].filter(Boolean).join(' • ') || 'N/A'}
+            {(venue.contactName || venue.contactTitle) && (
+              <div className="venue-panel-section">
+                <label className="venue-panel-label">Contact</label>
+                <div className="venue-panel-value">
+                  {[venue.contactName, venue.contactTitle].filter(Boolean).join(' • ')}
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="contact-links">
               {venue.contactPhone && (
@@ -396,12 +398,6 @@ function VenuePanel({ venue, onClose, onUpdate, onProspectUpdate, onDeleteVenue 
               )}
             </div>
 
-            {venue.assignedRep && (
-              <div className="venue-panel-section">
-                <label className="venue-panel-label">Assigned Rep</label>
-                <div className="venue-panel-value">{venue.assignedRep}</div>
-              </div>
-            )}
 
             {isProspect && (
               <div className="venue-panel-section">
