@@ -134,6 +134,39 @@ function App() {
     (inputVenues) => (Array.isArray(inputVenues) ? inputVenues.map(applyCachedCoordinates) : []),
     [applyCachedCoordinates]
   );
+  const applyVenuePayload = useCallback(
+    (payload) => {
+      const data = payload || {};
+      const nextVenues = mapVenuesWithCachedCoordinates(data.venues || []);
+      const degradedReason = String(data.reason || '').trim();
+      const nextTimestamp = data.timestamp || new Date().toISOString();
+      const isDegradedEmpty = Boolean(data.degraded) && nextVenues.length === 0;
+
+      setLastSync(nextTimestamp);
+
+      if (isDegradedEmpty) {
+        let hadPreviousVenues = false;
+        setVenues((prev) => {
+          hadPreviousVenues = prev.length > 0;
+          return prev;
+        });
+        setError(
+          hadPreviousVenues
+            ? `Venue data is delayed (${degradedReason || 'Sheets is temporarily unavailable'}). Showing last loaded venues.`
+            : `Venue data is temporarily unavailable (${degradedReason || 'Sheets is temporarily unavailable'}).`
+        );
+        return;
+      }
+
+      setVenues(nextVenues);
+      if (data.degraded) {
+        setError(`Venue data is delayed (${degradedReason || 'using a degraded response'}).`);
+      } else {
+        setError(null);
+      }
+    },
+    [mapVenuesWithCachedCoordinates]
+  );
 
   useEffect(() => {
     localStorage.setItem('svt_cached_coordinates', JSON.stringify(cachedCoordinates));
@@ -153,10 +186,8 @@ function App() {
     const pollingInterval = 120000; // 120 seconds
 
     pollingServiceRef.current = new PollingService(
-      (updatedVenues, timestamp) => {
-        setVenues(mapVenuesWithCachedCoordinates(updatedVenues));
-        setLastSync(timestamp || new Date().toISOString());
-        setError(null);
+      (venuePayload) => {
+        applyVenuePayload(venuePayload);
       },
       pollingInterval
     );
@@ -178,8 +209,7 @@ function App() {
         ]);
         if (canceled) return;
         if (venueData) {
-          setVenues(mapVenuesWithCachedCoordinates(venueData.venues || []));
-          setLastSync(venueData.timestamp || new Date().toISOString());
+          applyVenuePayload(venueData);
         } else {
           setError('Failed to load venues. Please check your connection.');
         }
@@ -206,7 +236,7 @@ function App() {
         pollingServiceRef.current.stop();
       }
     };
-  }, [mapVenuesWithCachedCoordinates]);
+  }, [applyVenuePayload]);
 
   /**
    * Load venues from API (manual refresh)
@@ -216,15 +246,14 @@ function App() {
       setLoading(true);
       setError(null);
       const data = await getVenues();
-      setVenues(mapVenuesWithCachedCoordinates(data.venues || []));
-      setLastSync(data.timestamp || new Date().toISOString());
+      applyVenuePayload(data);
     } catch (err) {
       console.error('Error loading venues:', err);
       setError('Failed to load venues. Please check your connection.');
     } finally {
       setLoading(false);
     }
-  }, [mapVenuesWithCachedCoordinates]);
+  }, [applyVenuePayload]);
 
   /**
    * Handle placemark click from map
