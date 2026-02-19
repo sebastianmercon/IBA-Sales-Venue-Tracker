@@ -404,6 +404,21 @@ const syncHandler = async (req, res) => {
         // Update Sheets (source of truth)
         await updateVisitedStatus(auth, config.sheetsId, config.sheetName, venueName, visited);
 
+        // Keep Accounts in sync when the same venue exists there.
+        if (config.prospectSheetName) {
+          try {
+            await updateProspect(
+              auth,
+              config.sheetsId,
+              config.prospectSheetName,
+              venueName,
+              { visited }
+            );
+          } catch (prospectSyncError) {
+            console.warn('Accounts visited sync skipped:', prospectSyncError.message);
+          }
+        }
+
         // Invalidate venues cache so the next poll gets fresh data
         cache.invalidate('venues');
 
