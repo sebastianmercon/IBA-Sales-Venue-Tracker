@@ -378,15 +378,20 @@ async function readVenues(auth, sheetsId, sheetName) {
     );
     let prospectVenues = [];
     if (config.prospectSheetName) {
-      prospectVenues = await readSheetVenues(
-        sheets,
-        auth,
-        sheetsId,
-        config.prospectSheetName,
-        PROSPECT_COLUMN_MAPPINGS,
-        new Map(),
-        'prospect'
-      );
+      try {
+        prospectVenues = await readSheetVenues(
+          sheets,
+          auth,
+          sheetsId,
+          config.prospectSheetName,
+          PROSPECT_COLUMN_MAPPINGS,
+          new Map(),
+          'prospect'
+        );
+      } catch (prospectError) {
+        // Fail-open for Accounts reads: keep serving active backend venues.
+        console.warn('Prospect sheet read failed; serving active venues only:', prospectError.message);
+      }
     }
     return [...activeVenues, ...prospectVenues];
   } catch (error) {
@@ -397,6 +402,21 @@ async function readVenues(auth, sheetsId, sheetName) {
     console.error('Error reading venues from Sheets:', error.message);
     throw new Error(`Failed to read venues from Google Sheets: ${error.message}`);
   }
+}
+
+async function readActiveVenuesOnly(auth, sheetsId, sheetName) {
+  const sheets = google.sheets({ version: 'v4', auth });
+  const COLUMN_MAPPINGS = getColumnMappings();
+
+  return readSheetVenues(
+    sheets,
+    auth,
+    sheetsId,
+    sheetName,
+    COLUMN_MAPPINGS,
+    new Map(),
+    'active'
+  );
 }
 
 async function getRowIndexByName(sheets, sheetsId, sheetName, venueName, mappings) {
@@ -1160,6 +1180,7 @@ async function applyConditionalFormatting(auth, sheetsId, sheetName, rowIndex) {
 
 module.exports = {
   readVenues,
+  readActiveVenuesOnly,
   updateVisitedStatus,
   updateVenueCoordinates,
   createProspect,

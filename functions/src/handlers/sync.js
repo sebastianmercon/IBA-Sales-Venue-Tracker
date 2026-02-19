@@ -8,13 +8,67 @@
  * Backend reads Sheets, updates My Maps to match
  */
 
-const { readVenues, syncVenuesAcrossSheets } = require('./sheets');
+const { readVenues, readActiveVenuesOnly, syncVenuesAcrossSheets } = require('./sheets');
 const { syncVenuesToMaps } = require('./maps');
 const { cache } = require('../utils/cache');
 
 const DUAL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 let lastDualSyncAt = 0;
 let dualSyncInFlight = null;
+
+function normalizeVenueName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isEmptyValue(value) {
+  return value === undefined || value === null || value === '';
+}
+
+function hasCoordinates(venue) {
+  return Number.isFinite(Number(venue?.latitude)) && Number.isFinite(Number(venue?.longitude));
+}
+
+function choosePrimaryVenue(existingVenue, candidateVenue) {
+  const existingIsActive = existingVenue?.recordType === 'active';
+  const candidateIsActive = candidateVenue?.recordType === 'active';
+  if (candidateIsActive && !existingIsActive) {
+    return candidateVenue;
+  }
+  if (existingIsActive && !candidateIsActive) {
+    return existingVenue;
+  }
+  if (!hasCoordinates(existingVenue) && hasCoordinates(candidateVenue)) {
+    return candidateVenue;
+  }
+  return existingVenue;
+}
+
+function mergeVenueRecords(primaryVenue, secondaryVenue) {
+  const merged = { ...primaryVenue };
+  Object.entries(secondaryVenue || {}).forEach(([key, value]) => {
+    if (isEmptyValue(merged[key]) && !isEmptyValue(value)) {
+      merged[key] = value;
+    }
+  });
+  return merged;
+}
+
+function dedupeVenuesForClient(venues) {
+  const dedupedByName = new Map();
+  (Array.isArray(venues) ? venues : []).forEach((venue) => {
+    const key = normalizeVenueName(venue?.name);
+    if (!key) return;
+    const existing = dedupedByName.get(key);
+    if (!existing) {
+      dedupedByName.set(key, venue);
+      return;
+    }
+    const primary = choosePrimaryVenue(existing, venue);
+    const secondary = primary === existing ? venue : existing;
+    dedupedByName.set(key, mergeVenueRecords(primary, secondary));
+  });
+  return Array.from(dedupedByName.values());
+}
 
 async function runDualSyncNow(auth, sheetsId, sheetName, prospectSheetName, options = {}) {
   if (!prospectSheetName) {
@@ -80,7 +134,8 @@ async function syncSheetsToMaps(auth, sheetsId, sheetName, mapsFileId) {
  */
 async function getSyncStatus(auth, sheetsId, sheetName) {
   try {
-    const venues = await readVenues(auth, sheetsId, sheetName);
+    const allVenues = await readVenues(auth, sheetsId, sheetName);
+    const venues = dedupeVenuesForClient(allVenues);
     return {
       success: true,
       venues,
@@ -88,8 +143,21 @@ async function getSyncStatus(auth, sheetsId, sheetName) {
       timestamp: new Date().toISOString(),
     };
   } catch (error) {
-    console.error('Error getting sync status:', error.message);
-    throw error;
+    console.warn('Full venue read failed, attempting active-only fallback:', error.message);
+    try {
+      const activeVenues = await readActiveVenuesOnly(auth, sheetsId, sheetName);
+      return {
+        success: true,
+        venues: activeVenues,
+        count: activeVenues.length,
+        degraded: true,
+        reason: 'Serving active venues only due to read pressure on secondary sheet',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (fallbackError) {
+      console.error('Error getting sync status:', fallbackError.message);
+      throw fallbackError;
+    }
   }
 }
 

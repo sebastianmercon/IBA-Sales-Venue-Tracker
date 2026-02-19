@@ -54,7 +54,7 @@ class PollingService {
     try {
       const data = await getVenues();
       if (this.onUpdate) {
-        this.onUpdate(data.venues || [], data.timestamp);
+        this.onUpdate(data || {});
       }
     } catch (error) {
       console.error('Polling error:', error);

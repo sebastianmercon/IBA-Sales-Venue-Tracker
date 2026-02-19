@@ -65,6 +65,12 @@ const {
 const VENUES_CACHE_TTL = 30_000;   // 30 seconds
 const CLUSTERS_CACHE_TTL = 300_000; // 5 minutes (polygons rarely change)
 const DUPLICATE_CACHE_TTL = 60_000; // 60 seconds
+const LAST_GOOD_VENUES_CACHE_TTL = 30 * 60_000; // 30 minutes
+const VENUES_READ_TIMEOUT_MS = 12_000;
+const VENUES_RETRY_TIMEOUT_MS = 25_000;
+const ENABLE_DUAL_SYNC_ON_READ = String(process.env.ENABLE_DUAL_SYNC_ON_READ || '')
+  .trim()
+  .toLowerCase() === 'true';
 
 function normalizeCacheKey(value) {
   return String(value || '').trim().toLowerCase();
@@ -78,6 +84,25 @@ function isSheetsQuotaError(error) {
     message.includes('too many requests') ||
     message.includes('per minute per user')
   );
+}
+
+function isTimeoutError(error) {
+  const message = String(error?.message || error?.response?.data?.error || '').toLowerCase();
+  return message.includes('timed out') || message.includes('timeout');
+}
+
+async function withTimeout(promise, timeoutMs, timeoutMessage) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage || 'Timed out')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -126,17 +151,73 @@ const syncHandler = async (req, res) => {
           return sendJson(req, res, 200, cached);
         }
         const auth = await getAuth(config);
-        try {
-          await runDualSyncIfDue(auth, config.sheetsId, config.sheetName, config.prospectSheetName);
-        } catch (syncError) {
-          if (!isSheetsQuotaError(syncError)) {
-            throw syncError;
+        if (ENABLE_DUAL_SYNC_ON_READ) {
+          try {
+            await withTimeout(
+              runDualSyncIfDue(auth, config.sheetsId, config.sheetName, config.prospectSheetName),
+              VENUES_READ_TIMEOUT_MS,
+              'Dual sync timed out'
+            );
+          } catch (syncError) {
+            const syncMessage = String(syncError?.message || '').toLowerCase();
+            const isTimedOut = syncMessage.includes('timed out');
+            if (!isSheetsQuotaError(syncError) && !isTimedOut) {
+              throw syncError;
+            }
+            console.warn('Skipping due dual-sync due quota/timeout pressure.');
           }
-          console.warn('Skipping due dual-sync because Sheets quota is currently saturated.');
         }
-        const status = await getSyncStatus(auth, config.sheetsId, config.sheetName);
-        cache.set('venues', status, VENUES_CACHE_TTL);
-        return sendJson(req, res, 200, status);
+        try {
+          const status = await withTimeout(
+            getSyncStatus(auth, config.sheetsId, config.sheetName),
+            VENUES_READ_TIMEOUT_MS,
+            'Venue read timed out'
+          );
+          cache.set('venues', status, VENUES_CACHE_TTL);
+          cache.set('venues:last_good', status, LAST_GOOD_VENUES_CACHE_TTL);
+          return sendJson(req, res, 200, status);
+        } catch (readError) {
+          const isTimedOut = isTimeoutError(readError);
+          if (isTimedOut) {
+            try {
+              const retryStatus = await withTimeout(
+                getSyncStatus(auth, config.sheetsId, config.sheetName),
+                VENUES_RETRY_TIMEOUT_MS,
+                'Venue retry read timed out'
+              );
+              cache.set('venues', retryStatus, VENUES_CACHE_TTL);
+              cache.set('venues:last_good', retryStatus, LAST_GOOD_VENUES_CACHE_TTL);
+              return sendJson(req, res, 200, {
+                ...retryStatus,
+                degraded: true,
+                reason: 'initial Sheets read timed out; recovered on retry',
+              });
+            } catch (retryError) {
+              if (!isSheetsQuotaError(retryError) && !isTimeoutError(retryError)) {
+                throw retryError;
+              }
+            }
+          }
+          if (!isSheetsQuotaError(readError) && !isTimedOut) {
+            throw readError;
+          }
+          const lastGood = cache.get('venues:last_good');
+          if (lastGood) {
+            return sendJson(req, res, 200, {
+              ...lastGood,
+              degraded: true,
+              reason: 'serving last known venues due to Sheets quota/timeout pressure',
+            });
+          }
+          return sendJson(req, res, 200, {
+            success: true,
+            venues: [],
+            count: 0,
+            degraded: true,
+            reason: 'Sheets read is temporarily unavailable (quota/timeout)',
+            timestamp: new Date().toISOString(),
+          });
+        }
       }
 
       if (method === 'POST' && path === '/api/venues/duplicate-check') {
